@@ -16,6 +16,8 @@ class MacroSimulator:
         self.rho_u = 0.7  # unemployment momentum
         self.rho_pi = 0.7  # inflation momentum
 
+        self.np_random = np.random
+
         self.reset()
 
     def reset(self):
@@ -36,7 +38,7 @@ class MacroSimulator:
         rate_gap = real_rate - self.r_star
 
         # define latent shocks
-        shock_u, shock_pi = np.random.normal(0, 0.1), np.random.normal(0, 0.1)
+        shock_u, shock_pi = self.np_random.normal(0, 0.1), self.np_random.normal(0, 0.1)
 
         if shock_regime == "demand":
             # more jobs, prices rise
@@ -102,6 +104,7 @@ class FedEnvBase(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+        self.sim.np_random = self.np_random
 
         # initial policy rate: neutral rate + target inflation = 4%
         self.current_rate = 4.0
@@ -188,6 +191,6 @@ class MockLLMObservationWrapper(gym.ObservationWrapper):
         else:
             llm_vector = np.array([0.8, 0.1, 0.5, -0.2, 0.1, 0.0], dtype=np.float32)[:self.llm_dim]
 
-        noise = np.random.normal(0, 0.1, size=self.llm_dim)
+        noise = unwrapped_env.np_random.normal(0, 0.1, size=self.llm_dim)
         obs["llm_belief"] = np.clip(llm_vector + noise, -1.0, 1.0).astype(np.float32)
         return obs

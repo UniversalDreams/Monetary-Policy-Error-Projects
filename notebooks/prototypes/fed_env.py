@@ -1,6 +1,5 @@
 import gymnasium as gym
 import numpy as np
-import matplotlib.pyplot as plt
 
 from gymnasium import spaces
 
@@ -107,7 +106,13 @@ class FedEnvBase(gym.Env):
         # initial policy rate: neutral rate + target inflation = 4%
         self.current_rate = 4.0
         self.t = 0
-        self.max_steps = 60  # 5 year sim episode
+        self.max_steps = 60
+
+        # randomize shock start and duration to prevent agent memorization
+        # this ensures the LSTM learns to detect the shock from signals, not just a fixed clock
+        self.shock_start = self.np_random.integers(10, 41)
+        self.shock_duration = self.np_random.integers(12, 25)
+        self.shock_end = self.shock_start + self.shock_duration
 
         self.sim.reset()
         return self._get_obs(), {}
@@ -131,13 +136,13 @@ class FedEnvBase(gym.Env):
         new_rate = self.current_rate + delta_rate
 
         # policy rate clipping. bound the interest rate between 0 and 20%
-        # central banks rarely go negative
-        # 20% is the historical max
+        # central banks rarely go negative. 20% is the historical max
         self.current_rate = np.clip(new_rate, 0.0, 20.0)
 
         # economic engine
-        # inject a 20-month supply shock to test the agent's crisis management
-        regime = "supply" if 20 <= self.t <= 40 else "normal"
+        # inject a dynamically scheduled supply shock to test true crisis management
+        # by checking against the randomized bounds, we evaluate real regime inference
+        regime = "supply" if self.shock_start <= self.t <= self.shock_end else "normal"
         self.sim.step(nominal_rate=self.current_rate, shock_regime=regime)
 
         # calculate reward
@@ -172,9 +177,11 @@ class MockLLMObservationWrapper(gym.ObservationWrapper):
         super().__init__(env)
         self.llm_dim = self.env.unwrapped.llm_dim
 
-    # Mocking the LLM Output: [Prob_Normal, Prob_Supply_Shock, Sentiment, Hawkish_Urgency, Uncertainty]
+    # mocking the LLM Output: [Prob_Normal, Prob_Supply_Shock, Sentiment, Hawkish_Urgency, Uncertainty]
     def observation(self, obs):
-        is_crisis = 20 <= self.env.unwrapped.t <= 40
+        # dynamically align the LLM's mock belief with the true randomized crisis window
+        unwrapped_env = self.env.unwrapped
+        is_crisis = unwrapped_env.shock_start <= unwrapped_env.t <= unwrapped_env.shock_end
 
         if is_crisis:
             llm_vector = np.array([0.1, 0.8, -0.9, 0.8, 0.5, 0.0], dtype=np.float32)[:self.llm_dim]

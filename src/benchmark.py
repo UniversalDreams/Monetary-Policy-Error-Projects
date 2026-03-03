@@ -128,6 +128,7 @@ def _collect_trajectory_taylor(seed: int = 0) -> dict:
     shock_start = env.unwrapped.shock_start
     shock_end   = env.unwrapped.shock_end
     pi_hist, u_hist, rate_hist = [], [], []
+    ep_reward = 0.0
     done = False
     while not done:
         pi, u, rate = obs["macro"]
@@ -135,11 +136,13 @@ def _collect_trajectory_taylor(seed: int = 0) -> dict:
         u_hist.append(float(u))
         rate_hist.append(float(rate))
         action = _taylor_action(obs, env.unwrapped.action_mapping)
-        obs, _, terminated, truncated, _ = env.step(action)
+        obs, reward, terminated, truncated, _ = env.step(action)
+        ep_reward += reward
         done = terminated or truncated
     env.close()
     return {"pi": pi_hist, "u": u_hist, "rate": rate_hist,
-            "shock_start": shock_start, "shock_end": shock_end}
+            "shock_start": shock_start, "shock_end": shock_end,
+            "ep_reward": ep_reward}
 
 
 def _collect_trajectory_ppo(model, env_factory, seed: int = 0,
@@ -149,6 +152,7 @@ def _collect_trajectory_ppo(model, env_factory, seed: int = 0,
     shock_start = env.unwrapped.shock_start
     shock_end   = env.unwrapped.shock_end
     pi_hist, u_hist, rate_hist = [], [], []
+    ep_reward = 0.0
     done = False
     lstm_states   = None
     episode_start = np.ones((1,), dtype=bool)
@@ -164,11 +168,13 @@ def _collect_trajectory_ppo(model, env_factory, seed: int = 0,
             episode_start = np.zeros((1,), dtype=bool)
         else:
             action, _ = model.predict(obs, deterministic=True)
-        obs, _, terminated, truncated, _ = env.step(int(action))
+        obs, reward, terminated, truncated, _ = env.step(int(action))
+        ep_reward += reward
         done = terminated or truncated
     env.close()
     return {"pi": pi_hist, "u": u_hist, "rate": rate_hist,
-            "shock_start": shock_start, "shock_end": shock_end}
+            "shock_start": shock_start, "shock_end": shock_end,
+            "ep_reward": ep_reward}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -191,6 +197,7 @@ def find_seed(criterion, max_scan: int = 500) -> int:
 def _find_scenario_seeds() -> dict[str, int]:
     return {
         "No-Shock":       find_seed(lambda ss, se, sc, ms: ss > ms),
+        "Min Shock":      find_seed(lambda ss, se, sc, ms: ss <= ms and sc <= config.SHOCK_SCALE_MIN + 0.1),
         "Standard Shock": 42,
         "Intense Shock":  find_seed(lambda ss, se, sc, ms: ss <= ms and sc >= 1.3),
     }
@@ -293,7 +300,7 @@ def plot_trajectories(trajectories: dict[str, dict], out_dir: str,
     """Dual-panel trajectory plot (macro vars + policy rate) for each condition."""
     conditions = list(trajectories.keys())
     n = len(conditions)
-    fig, axes = plt.subplots(2, n, figsize=(6 * n, 8), sharex="col")
+    fig, axes = plt.subplots(2, n, figsize=(6 * n, 8), sharex="col", sharey="row")
     if n == 1:
         axes = [[axes[0]], [axes[1]]]
 
@@ -309,7 +316,9 @@ def plot_trajectories(trajectories: dict[str, dict], out_dir: str,
         ax_top.axvspan(ss, se, color="gray", alpha=0.2, label="Supply Shock")
         ax_top.axhline(2.0, color="red",  linestyle="--", alpha=0.4, linewidth=1)
         ax_top.axhline(4.0, color="blue", linestyle="--", alpha=0.4, linewidth=1)
-        ax_top.set_title(style["label"], fontweight="bold", fontsize=12)
+        ep_reward = h.get("ep_reward")
+        reward_str = f"  (reward: {ep_reward:+.0f})" if ep_reward is not None else ""
+        ax_top.set_title(style["label"] + reward_str, fontweight="bold", fontsize=12)
         ax_top.set_ylabel("Rate (%)")
         ax_top.legend(loc="upper left", fontsize=8)
         ax_top.grid(True, alpha=0.3)

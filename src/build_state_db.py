@@ -98,12 +98,13 @@ def load_db(path: str) -> dict:
 
 
 def save_db(db: dict, path: str, n_unique: int):
+    all_config = {k: v for k, v in vars(config).items() if k.isupper()}
     db["metadata"].update({
-        "llm_dim": config.LLM_DIM,
         "key_format": "pi_u_rate (0.1% resolution)",
         "belief_state_keys": ["P_normal", "P_supply", "sentiment", "hawkishness", "uncertainty"],
         "n_unique_states": n_unique,
         "generated_at": datetime.utcnow().strftime("%Y-%m-%d"),
+        "config": all_config,
     })
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w") as f:

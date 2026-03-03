@@ -75,16 +75,7 @@ def _init_run(run_dir: str, args) -> dict:
         "base_episodes": args.base_episodes,
         "llm_model": args.model,
         "db_path": args.db,
-        "config": {
-            "lr": config.LR,
-            "lstm_lr": config.LSTM_LR,
-            "n_steps": config.N_STEPS,
-            "lstm_n_steps": config.LSTM_N_STEPS,
-            "batch_size": config.BATCH_SIZE,
-            "lstm_batch_size": config.LSTM_BATCH_SIZE,
-            "n_epochs": config.N_EPOCHS,
-            "gamma": config.GAMMA,
-        },
+        "config": {k: v for k, v in vars(config).items() if k.isupper()},
         "conditions": {
             "baseline": _pending_condition("baseline"),
             "llm": _pending_condition("llm"),
@@ -284,6 +275,89 @@ def _last100_stats(csv_path: str) -> tuple[float | None, float | None]:
     return round(float(np.mean(last100)), 4), round(float(np.std(last100)), 4)
 
 
+_CONDITION_STYLES = {
+    "taylor_rule": {"color": "green",      "label": "Taylor Rule"},
+    "baseline":    {"color": "purple",     "label": "Baseline PPO"},
+    "oracle":      {"color": "steelblue",  "label": "Oracle PPO"},
+    "llm":         {"color": "darkorange", "label": "LLM PPO"},
+}
+
+
+def _update_training_curves(run_dir: str, smooth: int = 100) -> None:
+    """Read all condition CSVs and redraw training_curves.png (mirrors benchmark.plot_training_curves)."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    plotted = False
+
+    for cond in ("baseline", "oracle", "llm"):
+        csv_path = os.path.join(run_dir, cond, "training.csv")
+        if not os.path.exists(csv_path):
+            continue
+        episodes, rewards = [], []
+        try:
+            with open(csv_path, newline="") as f:
+                for row in csv.DictReader(f):
+                    episodes.append(int(row["episode"]))
+                    rewards.append(float(row["ep_reward"]))
+        except Exception:
+            continue
+        if not rewards:
+            continue
+
+        style = _CONDITION_STYLES.get(cond, {"color": "steelblue", "label": cond})
+        rewards_arr = np.array(rewards)
+        ax.plot(episodes, rewards_arr, color=style["color"], alpha=0.15, linewidth=0.8)
+        if len(rewards_arr) >= smooth:
+            kernel   = np.ones(smooth) / smooth
+            smoothed = np.convolve(rewards_arr, kernel, mode="valid")
+            ax.plot(episodes[smooth - 1:], smoothed,
+                    color=style["color"], linewidth=2, label=style["label"])
+        else:
+            ax.plot(episodes, rewards_arr,
+                    color=style["color"], linewidth=2, label=style["label"])
+        plotted = True
+
+    if not plotted:
+        plt.close(fig)
+        return
+
+    ax.set_xlabel("Episode", fontsize=11)
+    ax.set_ylabel("Episode Reward", fontsize=11)
+    ax.set_title(f"Training Curves  (smoothed over {smooth} episodes)", fontweight="bold")
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+    plot_path = os.path.join(run_dir, "training_curves.png")
+    tmp = plot_path + ".tmp.png"
+    fig.savefig(tmp, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    os.replace(tmp, plot_path)
+
+
+class LivePlotCallback(BaseCallback):
+    """Redraws training_curves.png after every rollout (one PPO update cycle)."""
+    def __init__(self, run_dir: str, smooth: int = 100):
+        super().__init__()
+        self.run_dir = run_dir
+        self.smooth  = smooth
+
+    def _on_step(self) -> bool:
+        return True
+
+    def _on_rollout_end(self) -> None:
+        _update_training_curves(self.run_dir, self.smooth)
+
+    def _on_training_end(self) -> None:
+        _update_training_curves(self.run_dir, self.smooth)
+
+
 def _tb_log(out: str, name: str):
     """Return tensorboard log path only if tensorboard is installed."""
     try:
@@ -406,6 +480,7 @@ def main():
                 ),
                 EntropyAnnealCallback(config.LSTM_ENT_COEF, base_total_timesteps),
                 BestModelCallback(os.path.join(cond_dir, "best_model"), tag="baseline"),
+                LivePlotCallback(run_dir),
             ],
         )
         base_model.save(os.path.join(cond_dir, "model"))
@@ -448,6 +523,7 @@ def main():
                 ),
                 EntropyAnnealCallback(config.LSTM_ENT_COEF, base_total_timesteps),
                 BestModelCallback(os.path.join(cond_dir, "best_model"), tag="oracle"),
+                LivePlotCallback(run_dir),
             ],
         )
         oracle_model.save(os.path.join(cond_dir, "model"))
@@ -495,6 +571,7 @@ def main():
                 ),
                 EntropyAnnealCallback(config.LSTM_ENT_COEF, base_total_timesteps),
                 BestModelCallback(os.path.join(cond_dir, "best_model"), tag="llm"),
+                LivePlotCallback(run_dir),
             ],
         )
         llm_model.save(os.path.join(cond_dir, "model"))

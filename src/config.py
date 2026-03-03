@@ -17,7 +17,9 @@ LSTM_BATCH_SIZE = 128
 LSTM_ENT_COEF   = 0.0    # no entropy bonus — policy finds good basin without it
 LSTM_CLIP_RANGE = 0.05   # tighter clip — prevents catastrophic updates on LSTM
 REWARD_CLIP             = -250.0  # per-step floor — scaled for 120-step episodes (~-30k ceiling)
-RATE_VOLATILITY_WEIGHT  = 3.0    # multiplier on delta_rate^2 — discourages erratic moves
+RATE_VOLATILITY_WEIGHT  = 1.5    # multiplier on delta_rate^2 — discourages erratic moves
+SOFT_LANDING_WEIGHT     = 1.0    # peak bonus at (π*, u*) — same units as per-step loss
+SOFT_LANDING_SIGMA      = 0.5    # 1σ bandwidth (%) for both inflation and unemployment
 
 # Env
 LLM_DIM   = 5
@@ -39,7 +41,7 @@ PPO_DEVICE     = "cuda"  # LSTM on GPU; MLP stays on CPU (hardcoded in make_ppo)
 # Environment variation
 SHOCK_SCALE_MIN  = 0.4   # min supply shock scale multiplier (mild shock)
 SHOCK_SCALE_MAX  = 1.6   # max supply shock scale multiplier (severe shock)
-P_NO_SHOCK       = 0.20  # fraction of episodes with no supply shock
+P_NO_SHOCK       = 0.30  # fraction of episodes with no supply shock
 INIT_STATE_NOISE = 0.5   # std dev of Gaussian noise on initial pi and u
 
 # Offline state-keyed DB

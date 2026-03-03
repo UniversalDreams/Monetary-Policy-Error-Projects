@@ -11,6 +11,8 @@ import config
 
 _REWARD_CLIP            = config.REWARD_CLIP
 _RATE_VOLATILITY_WEIGHT = config.RATE_VOLATILITY_WEIGHT
+_SOFT_LANDING_WEIGHT    = config.SOFT_LANDING_WEIGHT
+_SOFT_LANDING_SIGMA     = config.SOFT_LANDING_SIGMA
 _INIT_STATE_NOISE       = config.INIT_STATE_NOISE
 
 
@@ -568,8 +570,16 @@ class FedEnvBase(gym.Env):
         # penalty for erratic actions
         rate_volatitlity_loss = _RATE_VOLATILITY_WEIGHT * delta_rate ** 2
 
+        # soft landing bonus: Gaussian peak at (π*, u*) rewards precision near targets
+        pi_gap = self.sim.pi - self.sim.pi_star
+        u_gap  = self.sim.u  - self.sim.u_star
+        soft_landing_bonus = _SOFT_LANDING_WEIGHT * float(np.exp(
+            -0.5 * ((pi_gap / _SOFT_LANDING_SIGMA) ** 2 + (u_gap / _SOFT_LANDING_SIGMA) ** 2)
+        ))
+
         # total reward (clipped to prevent catastrophic episodes from drowning gradients)
-        reward = max(-(pi_loss + u_loss + u_fear_penalty + rate_volatitlity_loss), _REWARD_CLIP)
+        reward = max(-(pi_loss + u_loss + u_fear_penalty + rate_volatitlity_loss)
+                     + soft_landing_bonus, _REWARD_CLIP)
 
         # termination
         terminated = False

@@ -1,2 +1,16 @@
 .venv
 .idea
+
+.env
+
+*.tex
+
+
+data/
+runs/
+.claude/
+PROJECT_STATUS.md
+__pycache__/
+*.pyc
+*.tmp
+*.log

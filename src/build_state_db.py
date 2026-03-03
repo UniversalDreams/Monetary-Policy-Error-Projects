@@ -5,14 +5,18 @@ Keys each unique (pi, u, rate) macro state to a 5-dim LLM belief vector,
 enabling StateKeyedLLMWrapper to look up beliefs for any episode trajectory
 without live inference at training time.
 
-Two-phase sampling strategy:
-  Phase 1: N/2 hold-rate episodes  → supply-shock trajectory coverage
-  Phase 2: N/2 random-action episodes → policy-induced (rate-varied) coverage
+Uses a static grid over the reachable state space — DirectLLMAdvisor.get_belief_state
+is a pure function of (pi, u, rate) with no path dependence, so episode simulation
+is unnecessary. Grid search gives guaranteed coverage and eliminates cache misses.
 
 Usage:
     .venv/Scripts/python src/build_state_db.py
-    .venv/Scripts/python src/build_state_db.py --episodes 50 --out data/state_belief_db_smoke.json
-    .venv/Scripts/python src/build_state_db.py --episodes 1000 --resume
+    .venv/Scripts/python src/build_state_db.py --out data/state_belief_db_smoke.json
+    .venv/Scripts/python src/build_state_db.py --resume
+    .venv/Scripts/python src/build_state_db.py --pi-min 1.5 --pi-max 2.5 --pi-step 0.5 \\
+        --u-min 3.5 --u-max 4.5 --u-step 0.5 \\
+        --rate-min 3.75 --rate-max 4.25 --rate-step 0.25 \\
+        --out data/smoke_grid.json
 """
 
 import argparse
@@ -29,7 +33,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
 import config
-from fed_env import DirectLLMAdvisor, FedEnvBase, OllamaBackend
+from fed_env import DirectLLMAdvisor, OllamaBackend
 
 # ------------------------------------------------------------─
 # LOGGING
@@ -61,28 +65,18 @@ def parse_key(key: str) -> tuple[float, float, float]:
 
 
 # ------------------------------------------------------------─
-# EPISODE SIMULATION
+# GRID ENUMERATION
 # ------------------------------------------------------------─
 
-def collect_states_from_episode(env: FedEnvBase, rng: np.random.Generator,
-                                 hold_rate: bool) -> set[str]:
-    """
-    Run one episode and return all unique state keys encountered.
-    hold_rate=True  → always action 3 (0.00 bps change)
-    hold_rate=False → uniform random actions
-    """
-    obs, _ = env.reset(seed=int(rng.integers(0, 2**31)))
-    keys: set[str] = set()
-
-    done = False
-    while not done:
-        pi, u, rate = obs["macro"]
-        keys.add(make_key(float(pi), float(u), float(rate)))
-
-        action = 3 if hold_rate else int(rng.integers(0, 7))
-        obs, _, terminated, truncated, _ = env.step(action)
-        done = terminated or truncated
-
+def enumerate_grid_keys(pi_min, pi_max, pi_step,
+                         u_min,  u_max,  u_step,
+                         rate_min, rate_max, rate_step) -> list[str]:
+    """Return all (pi, u, rate) grid keys covering the reachable state space."""
+    keys = []
+    for pi in np.arange(pi_min, pi_max + pi_step / 2, pi_step):
+        for u in np.arange(u_min, u_max + u_step / 2, u_step):
+            for rate in np.arange(rate_min, rate_max + rate_step / 2, rate_step):
+                keys.append(make_key(round(pi, 4), round(u, 4), round(rate, 4)))
     return keys
 
 
@@ -116,15 +110,31 @@ def save_db(db: dict, path: str, n_unique: int):
 # ------------------------------------------------------------─
 
 def main():
-    parser = argparse.ArgumentParser(description="Build state-keyed offline belief-state DB")
-    parser.add_argument("--episodes", type=int,  default=1000,
-                        help="Total episodes to simulate (default 1000)")
+    parser = argparse.ArgumentParser(description="Build state-keyed offline belief-state DB via grid search")
+    # Grid bounds
+    parser.add_argument("--pi-min",   type=float, default=-1.0,
+                        help="Min inflation rate (default -1.0)")
+    parser.add_argument("--pi-max",   type=float, default=12.0,
+                        help="Max inflation rate (default 12.0)")
+    parser.add_argument("--pi-step",  type=float, default=0.5,
+                        help="Inflation grid step (default 0.5)")
+    parser.add_argument("--u-min",    type=float, default=1.5,
+                        help="Min unemployment rate (default 1.5)")
+    parser.add_argument("--u-max",    type=float, default=11.0,
+                        help="Max unemployment rate (default 11.0)")
+    parser.add_argument("--u-step",   type=float, default=0.5,
+                        help="Unemployment grid step (default 0.5)")
+    parser.add_argument("--rate-min", type=float, default=0.0,
+                        help="Min fed funds rate (default 0.0)")
+    parser.add_argument("--rate-max", type=float, default=15.0,
+                        help="Max fed funds rate (default 15.0)")
+    parser.add_argument("--rate-step",type=float, default=0.25,
+                        help="Fed funds rate grid step (default 0.25)")
+    # Other
     parser.add_argument("--model",    type=str,  default=config.DEFAULT_MODEL,
                         help=f"Ollama model (default {config.DEFAULT_MODEL})")
     parser.add_argument("--out",      type=str,  default=config.DEFAULT_STATE_DB_PATH,
                         help=f"Output DB path (default {config.DEFAULT_STATE_DB_PATH})")
-    parser.add_argument("--seed",     type=int,  default=config.DEFAULT_SEED,
-                        help="Master RNG seed (default 42)")
     parser.add_argument("--resume",   action="store_true", default=True,
                         help="Skip keys already in DB (default True)")
     parser.add_argument("--no-resume", dest="resume", action="store_false")
@@ -135,49 +145,29 @@ def main():
     log = logging.getLogger(__name__)
 
     log.info("=" * 60)
-    log.info("build_state_db.py — state-keyed belief DB builder")
-    log.info(f"  episodes={args.episodes}  model={args.model}")
-    log.info(f"  out={args.out}  seed={args.seed}  resume={args.resume}")
+    log.info("build_state_db.py — state-keyed belief DB builder (grid search)")
+    log.info(f"  pi=[{args.pi_min},{args.pi_max}] step={args.pi_step}")
+    log.info(f"  u=[{args.u_min},{args.u_max}] step={args.u_step}")
+    log.info(f"  rate=[{args.rate_min},{args.rate_max}] step={args.rate_step}")
+    log.info(f"  model={args.model}  out={args.out}  resume={args.resume}")
     log.info("=" * 60)
 
     # -- Load existing DB --------------------------------------
     db = load_db(args.out) if args.resume else {"metadata": {}, "states": {}}
     existing_keys: set[str] = set(db["states"].keys())
-    log.info(f"Existing keys in DB: {len(existing_keys)}")
 
-    # -- Phase 1 & 2: collect pending state keys --------------─
-    rng = np.random.default_rng(args.seed)
-    env = FedEnvBase(llm_dim=config.LLM_DIM)
-
-    n_hold   = args.episodes // 2
-    n_random = args.episodes - n_hold
-    pending: set[str] = set()
-
-    log.info(f"Phase 1: {n_hold} hold-rate episodes (supply-shock coverage) …")
-    t_phase = time.time()
-    for ep in range(n_hold):
-        keys = collect_states_from_episode(env, rng, hold_rate=True)
-        pending |= keys
-        if (ep + 1) % 100 == 0:
-            log.info(f"  Phase 1  ep {ep+1:>4}/{n_hold}  unique_states={len(pending)}")
-    log.info(f"  Phase 1 done — {len(pending)} unique states  ({time.time()-t_phase:.1f}s)")
-
-    log.info(f"Phase 2: {n_random} random-action episodes (policy-induced coverage) …")
-    t_phase = time.time()
-    prev = len(pending)
-    for ep in range(n_random):
-        keys = collect_states_from_episode(env, rng, hold_rate=False)
-        pending |= keys
-        if (ep + 1) % 100 == 0:
-            log.info(f"  Phase 2  ep {ep+1:>4}/{n_random}  unique_states={len(pending)}")
-    log.info(f"  Phase 2 done — +{len(pending)-prev} new states  total={len(pending)}  ({time.time()-t_phase:.1f}s)")
-
-    env.close()
-
-    new_keys = sorted(pending - existing_keys)
-    log.info(f"Total unique pending states : {len(pending)}")
-    log.info(f"Already in DB              : {len(existing_keys)}")
-    log.info(f"New keys needing LLM calls : {len(new_keys)}")
+    # -- Enumerate grid ----------------------------------------
+    all_keys = enumerate_grid_keys(
+        args.pi_min, args.pi_max, args.pi_step,
+        args.u_min,  args.u_max,  args.u_step,
+        args.rate_min, args.rate_max, args.rate_step,
+    )
+    new_keys = [k for k in all_keys if k not in existing_keys]
+    log.info(
+        f"Grid: {len(all_keys)} total points  |  "
+        f"{len(existing_keys)} already in DB  |  "
+        f"{len(new_keys)} to query"
+    )
 
     if not new_keys:
         log.info("No new states to process — DB is up to date.")

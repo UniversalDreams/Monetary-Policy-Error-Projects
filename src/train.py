@@ -164,7 +164,7 @@ class EpisodeLogger(BaseCallback):
             ent_coef = float(self.model.ent_coef) if self.model is not None else 0.0
 
             print(
-                f"[{self.tag}] ── ep {self._ep_count} done  "
+                f"[{self.tag}] -- ep {self._ep_count} done  "
                 f"total_r={self._ep_reward:.2f}  "
                 f"avg_P_sup={avg_P_supply:.2f}  "
                 f"avg_unc={avg_uncertainty:.2f}  "
@@ -253,14 +253,14 @@ class BestModelCallback(BaseCallback):
                 if avg > self._best_avg:
                     self._best_avg = avg
                     self.model.save(self.save_path)
-                    print(f"[{self.tag}] ★ best avg({self.window}): {avg:.2f} → {self.save_path}.zip", flush=True)
+                    print(f"[{self.tag}] * best avg({self.window}): {avg:.2f} -> {self.save_path}.zip", flush=True)
 
             # EMA
             self._ema = r if self._ema is None else self._alpha * r + (1 - self._alpha) * self._ema
             if self._ema > self._best_ema:
                 self._best_ema = self._ema
                 self.model.save(self.ema_path)
-                print(f"[{self.tag}] ★ best ema({self.window}):  {self._ema:.2f} → {self.ema_path}.zip", flush=True)
+                print(f"[{self.tag}] * best ema({self.window}):  {self._ema:.2f} -> {self.ema_path}.zip", flush=True)
 
             self._ep_reward = 0.0
         return True
@@ -514,7 +514,7 @@ def main():
         print(f">>> LLM model saved to {cond_dir}/model.zip")
         print(f">>> Miss rate: {total_misses} misses = {miss_rate:.1f}%\n")
 
-    print(f"\nRun complete → {run_dir}")
+    print(f"\nRun complete -> {run_dir}")
     print(f"Next: python src/benchmark.py --run {run_dir} --db {args.db}")
 
 

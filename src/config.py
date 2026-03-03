@@ -36,6 +36,12 @@ DEFAULT_OUT    = "runs/"
 DEFAULT_SEED   = 42
 PPO_DEVICE     = "cuda"  # LSTM on GPU; MLP stays on CPU (hardcoded in make_ppo)
 
+# Environment variation
+SHOCK_SCALE_MIN  = 0.4   # min supply shock scale multiplier (mild shock)
+SHOCK_SCALE_MAX  = 1.6   # max supply shock scale multiplier (severe shock)
+P_NO_SHOCK       = 0.20  # fraction of episodes with no supply shock
+INIT_STATE_NOISE = 0.5   # std dev of Gaussian noise on initial pi and u
+
 # Offline state-keyed DB
 DEFAULT_STATE_DB_PATH  = "data/state_belief_db.json"
 CHECKPOINT_EVERY_KEYS  = 200   # save DB every N new LLM calls

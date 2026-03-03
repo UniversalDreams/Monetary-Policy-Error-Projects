@@ -172,6 +172,31 @@ def _collect_trajectory_ppo(model, env_factory, seed: int = 0,
 
 
 # ─────────────────────────────────────────────────────────────
+# SEED SCANNER
+# ─────────────────────────────────────────────────────────────
+
+def find_seed(criterion, max_scan: int = 500) -> int:
+    """Return first seed in [0, max_scan) where criterion(shock_start, shock_end, shock_scale, max_steps) is True."""
+    env = FedEnvBase(llm_dim=config.LLM_DIM)
+    for seed in range(max_scan):
+        env.reset(seed=seed)
+        u = env.unwrapped
+        if criterion(u.shock_start, u.shock_end, u.shock_scale, u.max_steps):
+            env.close()
+            return seed
+    env.close()
+    raise RuntimeError(f"No matching seed found in [0, {max_scan})")
+
+
+def _find_scenario_seeds() -> dict[str, int]:
+    return {
+        "No-Shock":       find_seed(lambda ss, se, sc, ms: ss > ms),
+        "Standard Shock": 42,
+        "Intense Shock":  find_seed(lambda ss, se, sc, ms: ss <= ms and sc >= 1.3),
+    }
+
+
+# ─────────────────────────────────────────────────────────────
 # PLOTS
 # ─────────────────────────────────────────────────────────────
 
@@ -262,7 +287,9 @@ def plot_training_curves(run_dir: str, out_dir: str, window: int = 100) -> None:
     print(f"Saved → {path}")
 
 
-def plot_trajectories(trajectories: dict[str, dict], out_dir: str) -> None:
+def plot_trajectories(trajectories: dict[str, dict], out_dir: str,
+                      title: str = "Representative Episode Trajectories (seed 42)",
+                      filename: str = "benchmark_trajectories.png") -> None:
     """Dual-panel trajectory plot (macro vars + policy rate) for each condition."""
     conditions = list(trajectories.keys())
     n = len(conditions)
@@ -308,9 +335,9 @@ def plot_trajectories(trajectories: dict[str, dict], out_dir: str) -> None:
         ax_bot.legend(loc="upper left", fontsize=8)
         ax_bot.grid(True, alpha=0.3)
 
-    fig.suptitle("Representative Episode Trajectories (seed 42)", fontweight="bold", fontsize=13)
+    fig.suptitle(title, fontweight="bold", fontsize=13)
     plt.tight_layout()
-    path = os.path.join(out_dir, "benchmark_trajectories.png")
+    path = os.path.join(out_dir, filename)
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"Saved → {path}")
@@ -415,13 +442,16 @@ def main():
             return RecurrentPPO.load(path)
         return PPO.load(path)
 
-    results:     dict[str, list[float]] = {}
-    trajectories: dict[str, dict]       = {}
+    results:          dict[str, list[float]]      = {}
+    scenario_seeds  = _find_scenario_seeds()
+    print(f"Scenario seeds: {scenario_seeds}")
+    traj_by_scenario: dict[str, dict[str, dict]] = {s: {} for s in scenario_seeds}
 
     # ── Taylor Rule ───────────────────────────────────────────
     print(f"\n>>> Taylor Rule  ({args.seeds} seeds) …")
     results["taylor_rule"] = evaluate_taylor_rule(args.seeds)
-    trajectories["taylor_rule"] = _collect_trajectory_taylor(seed=42)
+    for scen_label, scen_seed in scenario_seeds.items():
+        traj_by_scenario[scen_label]["taylor_rule"] = _collect_trajectory_taylor(seed=scen_seed)
     print(f"    mean={np.mean(results['taylor_rule']):+.2f}  "
           f"std={np.std(results['taylor_rule']):.2f}")
 
@@ -436,9 +466,11 @@ def main():
             args.seeds,
             args.policy,
         )
-        trajectories["baseline"] = _collect_trajectory_ppo(
-            base_model, lambda: FedEnvBase(llm_dim=config.LLM_DIM), seed=42, policy=args.policy
-        )
+        for scen_label, scen_seed in scenario_seeds.items():
+            traj_by_scenario[scen_label]["baseline"] = _collect_trajectory_ppo(
+                base_model, lambda: FedEnvBase(llm_dim=config.LLM_DIM),
+                seed=scen_seed, policy=args.policy,
+            )
         print(f"    mean={np.mean(results['baseline']):+.2f}  "
               f"std={np.std(results['baseline']):.2f}")
 
@@ -458,11 +490,12 @@ def main():
             args.seeds,
             args.policy,
         )
-        trajectories["llm"] = _collect_trajectory_ppo(
-            llm_model,
-            lambda: StateKeyedLLMWrapper(FedEnvBase(llm_dim=config.LLM_DIM), db_path=db_path),
-            seed=42, policy=args.policy,
-        )
+        for scen_label, scen_seed in scenario_seeds.items():
+            traj_by_scenario[scen_label]["llm"] = _collect_trajectory_ppo(
+                llm_model,
+                lambda: StateKeyedLLMWrapper(FedEnvBase(llm_dim=config.LLM_DIM), db_path=db_path),
+                seed=scen_seed, policy=args.policy,
+            )
         print(f"    mean={np.mean(results['llm']):+.2f}  "
               f"std={np.std(results['llm']):.2f}")
 
@@ -477,11 +510,12 @@ def main():
             args.seeds,
             args.policy,
         )
-        trajectories["oracle"] = _collect_trajectory_ppo(
-            oracle_model,
-            lambda: MockLLMObservationWrapper(FedEnvBase(llm_dim=config.LLM_DIM)),
-            seed=42, policy=args.policy,
-        )
+        for scen_label, scen_seed in scenario_seeds.items():
+            traj_by_scenario[scen_label]["oracle"] = _collect_trajectory_ppo(
+                oracle_model,
+                lambda: MockLLMObservationWrapper(FedEnvBase(llm_dim=config.LLM_DIM)),
+                seed=scen_seed, policy=args.policy,
+            )
         print(f"    mean={np.mean(results['oracle']):+.2f}  "
               f"std={np.std(results['oracle']):.2f}")
 
@@ -508,7 +542,13 @@ def main():
     if run_dir:
         plot_training_curves(run_dir, out_dir)
     plot_reward_comparison(results, out_dir)
-    plot_trajectories(trajectories, out_dir)
+    for scen_label, trajs in traj_by_scenario.items():
+        slug = scen_label.lower().replace(" ", "_").replace("-", "_")
+        plot_trajectories(
+            trajs, out_dir,
+            title=f"Representative Episode — {scen_label}  (seed {scenario_seeds[scen_label]})",
+            filename=f"benchmark_trajectories_{slug}.png",
+        )
 
     # ── Update metadata.json ──────────────────────────────────
     if run_meta is not None and run_dir:

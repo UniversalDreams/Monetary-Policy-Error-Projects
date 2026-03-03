@@ -11,6 +11,7 @@ import config
 
 _REWARD_CLIP            = config.REWARD_CLIP
 _RATE_VOLATILITY_WEIGHT = config.RATE_VOLATILITY_WEIGHT
+_INIT_STATE_NOISE       = config.INIT_STATE_NOISE
 
 
 # ─────────────────────────────────────────────────────────────
@@ -415,9 +416,11 @@ class MacroSimulator:
         self.reset()
 
     def reset(self):
-        self.pi = self.pi_star
-        self.u = self.u_star
-        self.pi_e = self.pi_star
+        noise_pi = self.np_random.normal(0, _INIT_STATE_NOISE)
+        noise_u  = self.np_random.normal(0, _INIT_STATE_NOISE)
+        self.pi   = np.clip(self.pi_star + noise_pi, 0.0, 10.0)
+        self.u    = np.clip(self.u_star  + noise_u,  1.0, 10.0)
+        self.pi_e = self.pi
         return self._get_obs()
 
     def _get_obs(self):
@@ -426,7 +429,7 @@ class MacroSimulator:
             "unemployment": self.u
         }
 
-    def step(self, nominal_rate, shock_regime="normal"):
+    def step(self, nominal_rate, shock_regime="normal", shock_scale=1.0):
         # compute real rate gap
         real_rate = nominal_rate - self.pi_e
         rate_gap = real_rate - self.r_star
@@ -436,12 +439,12 @@ class MacroSimulator:
 
         if shock_regime == "demand":
             # more jobs, prices rise
-            shock_u -= 0.5
-            shock_pi += 1.0
+            shock_u -= 0.5 * shock_scale
+            shock_pi += 1.0 * shock_scale
         elif shock_regime == "supply":
             # stagflation: moderate unemployment push + strong inflation push
-            shock_u += 1.0
-            shock_pi += 2.0
+            shock_u += 1.0 * shock_scale
+            shock_pi += 2.0 * shock_scale
             # supply constraints prevent hiring even with loose monetary policy —
             # cap the stimulative effect of a negative real rate during the shock
             rate_gap = max(rate_gap, 0.0)
@@ -510,8 +513,16 @@ class FedEnvBase(gym.Env):
 
         # randomize shock start and duration to prevent agent memorization
         # this ensures the LSTM learns to detect the shock from signals, not just a fixed clock
-        self.shock_start = self.np_random.integers(10, 41)
-        self.shock_duration = self.np_random.integers(12, 25)
+        if self.np_random.random() < config.P_NO_SHOCK:
+            # no-shock episode: set shock_start beyond episode length so it never triggers
+            self.shock_start    = self.max_steps + 1
+            self.shock_duration = 0
+            self.shock_scale    = 0.0
+        else:
+            self.shock_start    = self.np_random.integers(10, 41)
+            self.shock_duration = self.np_random.integers(12, 25)
+            self.shock_scale    = float(self.np_random.uniform(
+                                      config.SHOCK_SCALE_MIN, config.SHOCK_SCALE_MAX))
         self.shock_end = self.shock_start + self.shock_duration
 
         self.sim.reset()
@@ -543,7 +554,9 @@ class FedEnvBase(gym.Env):
         # inject a dynamically scheduled supply shock to test true crisis management
         # by checking against the randomized bounds, we evaluate real regime inference
         regime = "supply" if self.shock_start <= self.t <= self.shock_end else "normal"
-        self.sim.step(nominal_rate=self.current_rate, shock_regime=regime)
+        self.sim.step(nominal_rate=self.current_rate,
+                      shock_regime=regime,
+                      shock_scale=self.shock_scale)
 
         # calculate reward
         pi_loss = (self.sim.pi - self.sim.pi_star) ** 2
@@ -582,13 +595,18 @@ class MockLLMObservationWrapper(gym.ObservationWrapper):
         # dynamically align the LLM's mock belief with the true randomized crisis window
         unwrapped_env = self.env.unwrapped
         is_crisis = unwrapped_env.shock_start <= unwrapped_env.t <= unwrapped_env.shock_end
+        scale = getattr(unwrapped_env, 'shock_scale', 1.0)
 
         if is_crisis:
-            llm_vector = np.array([0.1, 0.8, -0.9, 0.3, 0.5, 0.0], dtype=np.float32)[:self.llm_dim]
+            p_supply    = float(np.clip(0.5 + 0.3 * scale, 0.5, 0.95))
+            hawkishness = float(np.clip(0.2 + 0.5 * scale, 0.2, 0.9))
+            llm_vector  = np.array([1 - p_supply, p_supply, -0.6 * scale,
+                                     hawkishness, 0.3 + 0.1 * scale], dtype=np.float32)
         else:
-            llm_vector = np.array([0.8, 0.1, 0.5, -0.2, 0.1, 0.0], dtype=np.float32)[:self.llm_dim]
+            llm_vector  = np.array([0.8, 0.1, 0.5, -0.2, 0.1], dtype=np.float32)
 
-        noise = unwrapped_env.np_random.normal(0, 0.1, size=self.llm_dim)
+        llm_vector = llm_vector[:self.llm_dim]
+        noise = unwrapped_env.np_random.normal(0, 0.05, size=self.llm_dim)
         obs["llm_belief"] = np.clip(llm_vector + noise, -1.0, 1.0).astype(np.float32)
         return obs
 

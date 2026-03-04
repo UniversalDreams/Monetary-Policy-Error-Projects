@@ -25,7 +25,7 @@ Lightweight discrete-time macro model. Three coupled equations per step:
 
 **IS curve** — unemployment responds to the real rate gap:
 
-$$u_{t+1} = u^{*} + \rho_u(u_t - u^{*}) + \alpha\underbrace{(r_t - \pi^{e}_t - r^{*})}_{\text{real rate gap}} + \epsilon^{u}_t$$
+$$u_{t+1} = u^{*} + \rho_u(u_t - u^{*}) + \alpha(r_t - \pi^{e}_t - r^{*}) + \epsilon^{u}_t$$
 
 **Phillips curve** — inflation responds to the updated unemployment gap:
 

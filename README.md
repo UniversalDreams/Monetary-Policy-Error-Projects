@@ -26,7 +26,7 @@ Lightweight discrete-time macro model. Three coupled equations per step:
 
 ### IS Curve
 
-$$
+```math
 u_{t+1}
 =
 u^{*}
@@ -36,11 +36,11 @@ u^{*}
 \alpha (r_t - \pi^{e}_t - r^{*})
 +
 \epsilon^{u}_t
-$$
+```
 
 ### Phillips Curve
 
-$$
+```math
 \pi_{t+1}
 =
 \pi^{*}
@@ -50,18 +50,17 @@ $$
 \kappa (u_{t+1} - u^{*})
 +
 \epsilon^{\pi}_t
-$$
+```
 
 ### Inflation Expectations
 
-$$
+```math
 \pi^{e}_{t+1}
 =
 0.5\,\pi^{e}_t
 +
 0.5\,\pi_{t+1}
-$$
-
+```
 ### Supply Shock
 
 Active for `duration ∈ [12, 24]` steps, scale \( s \in [0.4, 1.6] \).

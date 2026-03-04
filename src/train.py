@@ -367,23 +367,30 @@ def _tb_log(out: str, name: str):
         return None
 
 
-def make_ppo(env, seed: int, out: str, name: str, policy: str = "mlp"):
+def make_ppo(env, seed: int, out: str, name: str, policy: str = "mlp",
+             condition: str = "baseline"):
     if policy == "lstm":
         if not _HAS_SB3_CONTRIB:
             raise ImportError("sb3_contrib is required for LSTM policy. pip install sb3-contrib")
+        cond_key = condition.upper()
+        lr_start    = getattr(config, f"{cond_key}_LR")
+        lr_end      = getattr(config, f"{cond_key}_LR_END")
+        decay_start = getattr(config, f"{cond_key}_LR_DECAY_START")
+        ent_coef    = getattr(config, f"{cond_key}_ENT_COEF")
+        clip_range  = getattr(config, f"{cond_key}_CLIP_RANGE")
         return RecurrentPPO(
             "MultiInputLstmPolicy",
             env,
             learning_rate=lambda p: (
-                config.LSTM_LR if p > 0.4
-                else config.LSTM_LR_END + (config.LSTM_LR - config.LSTM_LR_END) * (p / 0.4)
+                lr_start if p > decay_start
+                else lr_end + (lr_start - lr_end) * (p / decay_start)
             ),
             n_steps=config.LSTM_N_STEPS,
             batch_size=config.LSTM_BATCH_SIZE,
-            n_epochs=config.N_EPOCHS,
+            n_epochs=config.LSTM_N_EPOCHS,
             gamma=config.GAMMA,
-            ent_coef=config.LSTM_ENT_COEF,   # float — annealed by EntropyAnnealCallback
-            clip_range=config.LSTM_CLIP_RANGE,
+            ent_coef=ent_coef,   # float — annealed by EntropyAnnealCallback
+            clip_range=clip_range,
             verbose=0,
             seed=seed,
             device="cuda",
@@ -462,7 +469,7 @@ def main():
         _save_metadata(run_dir, meta)
 
         base_env = DummyVecEnv([lambda: FedEnvBase(llm_dim=config.LLM_DIM) for _ in range(config.N_ENVS)])
-        base_model = make_ppo(base_env, args.seed, cond_dir, "baseline", args.policy)
+        base_model = make_ppo(base_env, args.seed, cond_dir, "baseline", args.policy, condition="baseline")
         base_model.learn(
             total_timesteps=base_total_timesteps,
             callback=[
@@ -478,7 +485,7 @@ def main():
                     condition_key="baseline",
                     run_dir=run_dir,
                 ),
-                EntropyAnnealCallback(config.LSTM_ENT_COEF, base_total_timesteps),
+                EntropyAnnealCallback(config.BASELINE_ENT_COEF, base_total_timesteps),
                 BestModelCallback(os.path.join(cond_dir, "best_model"), tag="baseline"),
                 LivePlotCallback(run_dir),
             ],
@@ -505,7 +512,7 @@ def main():
         _save_metadata(run_dir, meta)
 
         oracle_env = DummyVecEnv([lambda: MockLLMObservationWrapper(FedEnvBase(llm_dim=config.LLM_DIM)) for _ in range(config.N_ENVS)])
-        oracle_model = make_ppo(oracle_env, args.seed, cond_dir, "oracle", args.policy)
+        oracle_model = make_ppo(oracle_env, args.seed, cond_dir, "oracle", args.policy, condition="oracle")
         oracle_model.learn(
             total_timesteps=base_total_timesteps,
             callback=[
@@ -521,7 +528,7 @@ def main():
                     condition_key="oracle",
                     run_dir=run_dir,
                 ),
-                EntropyAnnealCallback(config.LSTM_ENT_COEF, base_total_timesteps),
+                EntropyAnnealCallback(config.ORACLE_ENT_COEF, base_total_timesteps),
                 BestModelCallback(os.path.join(cond_dir, "best_model"), tag="oracle"),
                 LivePlotCallback(run_dir),
             ],
@@ -553,7 +560,7 @@ def main():
 
         _db = args.db
         llm_env = DummyVecEnv([lambda: StateKeyedLLMWrapper(FedEnvBase(llm_dim=config.LLM_DIM), db_path=_db) for _ in range(config.N_ENVS)])
-        llm_model = make_ppo(llm_env, args.seed, cond_dir, "llm", args.policy)
+        llm_model = make_ppo(llm_env, args.seed, cond_dir, "llm", args.policy, condition="llm")
         llm_model.learn(
             total_timesteps=base_total_timesteps,
             callback=[
@@ -569,7 +576,7 @@ def main():
                     condition_key="llm",
                     run_dir=run_dir,
                 ),
-                EntropyAnnealCallback(config.LSTM_ENT_COEF, base_total_timesteps),
+                EntropyAnnealCallback(config.LLM_ENT_COEF, base_total_timesteps),
                 BestModelCallback(os.path.join(cond_dir, "best_model"), tag="llm"),
                 LivePlotCallback(run_dir),
             ],

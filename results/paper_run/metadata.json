@@ -1,0 +1,131 @@
+{
+  "run_id": "paper_run",
+  "created_at": "2026-03-03T21:35:11",
+  "policy": "lstm",
+  "seed": 42,
+  "base_episodes": 10000,
+  "llm_model": "qwen2.5:14b",
+  "db_path": "data/state_belief_db_hierarchical.json",
+  "config": {
+    "LR": 0.0005,
+    "N_STEPS": 240,
+    "BATCH_SIZE": 60,
+    "N_EPOCHS": 4,
+    "GAMMA": 0.99,
+    "LSTM_N_STEPS": 1024,
+    "LSTM_BATCH_SIZE": 128,
+    "LSTM_N_EPOCHS": 4,
+    "BASELINE_LR": 0.0003,
+    "BASELINE_LR_END": 5e-05,
+    "BASELINE_LR_DECAY_START": 0.3,
+    "BASELINE_ENT_COEF": 0.0,
+    "BASELINE_CLIP_RANGE": 0.1,
+    "ORACLE_LR": 0.0003,
+    "ORACLE_LR_END": 1e-05,
+    "ORACLE_LR_DECAY_START": 0.4,
+    "ORACLE_ENT_COEF": 0.0,
+    "ORACLE_CLIP_RANGE": 0.05,
+    "LLM_LR": 0.0002,
+    "LLM_LR_END": 1e-05,
+    "LLM_LR_DECAY_START": 0.3,
+    "LLM_ENT_COEF": 0.0,
+    "LLM_CLIP_RANGE": 0.08,
+    "REWARD_CLIP": -250.0,
+    "RATE_VOLATILITY_WEIGHT": 1.5,
+    "SOFT_LANDING_WEIGHT": 1.0,
+    "SOFT_LANDING_SIGMA": 0.5,
+    "LLM_DIM": 5,
+    "MAX_STEPS": 120,
+    "DEFAULT_EPISODES": 500,
+    "DEFAULT_BASE_EPISODES": 10000,
+    "N_ENVS": 4,
+    "CHECKPOINT_FREQ": 100000,
+    "EVAL_SEEDS": 20,
+    "DEFAULT_MODEL": "qwen2.5:14b",
+    "DEFAULT_OUT": "runs/",
+    "DEFAULT_SEED": 42,
+    "PPO_DEVICE": "cuda",
+    "SHOCK_SCALE_MIN": 0.4,
+    "SHOCK_SCALE_MAX": 1.6,
+    "P_NO_SHOCK": 0.3,
+    "INIT_STATE_NOISE": 0.5,
+    "DEFAULT_STATE_DB_PATH": "data/state_belief_db.json",
+    "CHECKPOINT_EVERY_KEYS": 10
+  },
+  "conditions": {
+    "baseline": {
+      "status": "completed",
+      "episodes_trained": 2500,
+      "total_timesteps": 1200000,
+      "final_reward_mean": -541.5463,
+      "final_reward_std": 295.2993,
+      "model_path": "baseline/model.zip",
+      "training_csv": "baseline/training.csv",
+      "completed_at": "2026-03-04T00:35:54"
+    },
+    "llm": {
+      "status": "completed",
+      "episodes_trained": 2500,
+      "total_timesteps": 1200000,
+      "final_reward_mean": -575.1565,
+      "final_reward_std": 296.7534,
+      "model_path": "llm/model.zip",
+      "training_csv": "llm/training.csv",
+      "completed_at": "2026-03-03T23:13:59"
+    },
+    "oracle": {
+      "status": "completed",
+      "episodes_trained": 2500,
+      "total_timesteps": 1200000,
+      "final_reward_mean": -570.4319,
+      "final_reward_std": 313.4813,
+      "model_path": "oracle/model.zip",
+      "training_csv": "oracle/training.csv",
+      "completed_at": "2026-03-04T01:39:59"
+    }
+  },
+  "benchmark": {
+    "seeds": 100,
+    "evaluated_at": "2026-03-04T08:30:13",
+    "conditions": {
+      "taylor_rule": {
+        "mean": -647.6641,
+        "std": 790.6015
+      },
+      "baseline": {
+        "mean": -701.0259,
+        "std": 585.6475
+      },
+      "llm": {
+        "mean": -519.1853,
+        "std": 608.7491
+      },
+      "oracle": {
+        "mean": -592.8106,
+        "std": 647.3022
+      }
+    }
+  },
+  "covid_benchmark": {
+    "runs": 1,
+    "evaluated_at": "2026-03-04T08:30:13",
+    "conditions": {
+      "taylor_rule": {
+        "mean": -1678.3704,
+        "std": 0.0
+      },
+      "baseline": {
+        "mean": -1610.0225,
+        "std": 0.0
+      },
+      "llm": {
+        "mean": -1469.0714,
+        "std": 0.0
+      },
+      "oracle": {
+        "mean": -2020.3332,
+        "std": 0.0
+      }
+    }
+  }
+}

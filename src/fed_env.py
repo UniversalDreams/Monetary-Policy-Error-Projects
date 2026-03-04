@@ -185,6 +185,14 @@ SPECIALIST_AGENTS = {
             "You are a market sentiment analyst. Read the Monthly Economic Dispatch\n"
             "and rate overall economic sentiment from -1 (crisis/recession) to +1 (boom).\n\n"
             "Consider: consumer confidence, corporate hiring, credit availability, spending trends.\n\n"
+            "CALIBRATION — anchor your scores:\n"
+            "  DEFLATION (inflation < 0%): negative sentiment (-0.3 to -0.8).\n"
+            "    Falling prices signal weak demand and recession risk — not a positive.\n"
+            "  BELOW TARGET (0-1.5%): mildly negative to neutral (-0.1 to -0.4).\n"
+            "  NORMAL (~2%, ~4% unemployment): moderately positive (+0.3 to +0.7).\n"
+            "  OVERHEATING (inflation > 4%, low unemployment): mildly negative (-0.1 to -0.4).\n"
+            "    Strong activity, but inflation erodes real incomes and rate hikes loom.\n"
+            "  STAGFLATION (high inflation + high unemployment): strongly negative (-0.5 to -1.0).\n\n"
             'Output ONLY this JSON:\n{"sentiment": <float -1 to 1>, "reasoning": "<1 sentence>"}'
         ),
     },
@@ -193,10 +201,17 @@ SPECIALIST_AGENTS = {
             "You are a monetary policy specialist advising the FOMC.\n"
             "Read the Monthly Economic Dispatch and assess urgency for rate action.\n"
             "+1 = strongly hawkish (inflation crisis, raise rates now)\n"
-            "-1 = strongly dovish (recession risk, cut rates)\n"
+            "-1 = strongly dovish (recession/deflation risk, cut rates aggressively)\n"
             " 0 = hold steady\n\n"
-            "NOTE: Stagflation creates a dilemma. Lean slightly hawkish (+0.2 to +0.4) but\n"
-            "NOT aggressively so — raising rates aggressively in a supply shock worsens unemployment.\n\n"
+            "CALIBRATION — anchor your scores:\n"
+            "  DEFLATION (inflation < 0%): strongly dovish (-0.6 to -1.0).\n"
+            "    Deflation with elevated rates means extremely tight real rates — cut aggressively.\n"
+            "  BELOW TARGET (0-1.5%): moderately dovish (-0.3 to -0.6).\n"
+            "  ON TARGET (~2%): neutral, adjust slightly based on unemployment.\n"
+            "  OVERHEATING (inflation 3-5%, low unemployment): moderately hawkish (+0.3 to +0.6).\n"
+            "  INFLATION CRISIS (inflation > 5%): strongly hawkish (+0.6 to +1.0).\n"
+            "  STAGFLATION dilemma: slightly hawkish (+0.2 to +0.4) but NOT aggressively —\n"
+            "    raising rates in a supply shock worsens unemployment.\n\n"
             'Output ONLY this JSON:\n{"hawkishness": <float -1 to 1>, "reasoning": "<1 sentence>"}'
         ),
     },
@@ -206,7 +221,10 @@ SPECIALIST_AGENTS = {
             "specialist analyses, assess total epistemic uncertainty about the current regime.\n\n"
             "0 = certain (all analysts agree, data crystal clear)\n"
             "1 = maximum uncertainty (analysts contradict, unusual regime)\n\n"
-            "High uncertainty expected in early stages of supply shocks (looks like demand inflation).\n\n"
+            "High uncertainty expected in:\n"
+            "  - Early stages of supply shocks (looks like demand inflation initially)\n"
+            "  - Deflation onset (hard to distinguish from low-inflation normal)\n"
+            "  - Mixed signals: low/negative inflation but rising unemployment\n\n"
             'Output ONLY this JSON:\n{"uncertainty": <float 0 to 1>, "reasoning": "<1 sentence>"}'
         ),
     },
@@ -342,16 +360,18 @@ BELIEF STATE DIMENSIONS:
 - P_normal: probability of healthy/normal economy [0, 1]
 - P_supply: probability of active supply shock / stagflation [0, 1]  (P_normal + P_supply = 1.0)
 - sentiment: overall economic sentiment [-1 = crisis, +1 = boom]
-- hawkishness: urgency for rate hikes [-1 = cut now, +1 = hike now]
+- hawkishness: urgency for rate hikes [-1 = cut aggressively, +1 = hike aggressively]
 - uncertainty: epistemic uncertainty about the regime [0 = certain, 1 = maximum uncertainty]
 
 CALIBRATION EXAMPLES (interpolate smoothly between these):
-pi=2.0%, u=4.0%: {"P_normal":0.92,"P_supply":0.08,"sentiment":0.5,"hawkishness":-0.1,"uncertainty":0.10}
-pi=3.0%, u=4.0%: {"P_normal":0.78,"P_supply":0.22,"sentiment":0.3,"hawkishness":0.3,"uncertainty":0.20}
-pi=4.0%, u=4.5%: {"P_normal":0.55,"P_supply":0.45,"sentiment":0.0,"hawkishness":0.3,"uncertainty":0.40}
-pi=5.0%, u=5.0%: {"P_normal":0.28,"P_supply":0.72,"sentiment":-0.4,"hawkishness":0.2,"uncertainty":0.55}
-pi=6.0%, u=5.5%: {"P_normal":0.12,"P_supply":0.88,"sentiment":-0.6,"hawkishness":0.2,"uncertainty":0.45}
-pi=7.0%, u=6.0%: {"P_normal":0.05,"P_supply":0.95,"sentiment":-0.8,"hawkishness":0.1,"uncertainty":0.35}
+pi=-1.0%, u=4.5%: {"P_normal":0.60,"P_supply":0.05,"sentiment":-0.6,"hawkishness":-0.8,"uncertainty":0.25}
+pi=0.5%,  u=4.0%: {"P_normal":0.80,"P_supply":0.05,"sentiment":-0.2,"hawkishness":-0.5,"uncertainty":0.15}
+pi=2.0%,  u=4.0%: {"P_normal":0.92,"P_supply":0.08,"sentiment":0.5,"hawkishness":-0.1,"uncertainty":0.10}
+pi=3.0%,  u=4.0%: {"P_normal":0.78,"P_supply":0.22,"sentiment":0.3,"hawkishness":0.3,"uncertainty":0.20}
+pi=4.0%,  u=4.5%: {"P_normal":0.55,"P_supply":0.45,"sentiment":0.0,"hawkishness":0.3,"uncertainty":0.40}
+pi=5.0%,  u=5.0%: {"P_normal":0.28,"P_supply":0.72,"sentiment":-0.4,"hawkishness":0.2,"uncertainty":0.55}
+pi=6.0%,  u=5.5%: {"P_normal":0.12,"P_supply":0.88,"sentiment":-0.6,"hawkishness":0.2,"uncertainty":0.45}
+pi=7.0%,  u=6.0%: {"P_normal":0.05,"P_supply":0.95,"sentiment":-0.8,"hawkishness":0.1,"uncertainty":0.35}
 
 KEY RULES:
 - P_normal + P_supply must equal exactly 1.0
@@ -359,6 +379,10 @@ KEY RULES:
 - Rising inflation alone (low unemployment) = demand shock, NOT supply shock
 - Hawkishness near 0 during stagflation — raising rates aggressively worsens unemployment
 - Uncertainty peaks early in a supply shock (hard to distinguish from demand inflation)
+- DEFLATION (pi < 0%): sentiment must be negative; hawkishness must be strongly negative (-0.6 to -1.0).
+  Deflation is not a positive signal — it indicates weak demand and recession risk.
+  Real rates are already elevated when pi < 0; cutting is the priority.
+- High fed rate with low/negative inflation = very tight policy = reinforce dovish signal.
 
 Output ONLY valid JSON, no markdown, no explanation:
 {"P_normal":x,"P_supply":x,"sentiment":x,"hawkishness":x,"uncertainty":x}"""

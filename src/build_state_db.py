@@ -33,7 +33,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
 import config
-from fed_env import DirectLLMAdvisor, OllamaBackend
+from fed_env import DirectLLMAdvisor, HierarchicalLLMAdvisor, OllamaBackend
 
 # ------------------------------------------------------------─
 # LOGGING
@@ -131,6 +131,8 @@ def main():
     parser.add_argument("--rate-step",type=float, default=0.25,
                         help="Fed funds rate grid step (default 0.25)")
     # Other
+    parser.add_argument("--advisor", choices=["direct", "hierarchical"], default="direct",
+                        help="LLM advisor: 'direct' (1 call/point) or 'hierarchical' (8 calls/point). Default: direct")
     parser.add_argument("--model",    type=str,  default=config.DEFAULT_MODEL,
                         help=f"Ollama model (default {config.DEFAULT_MODEL})")
     parser.add_argument("--out",      type=str,  default=config.DEFAULT_STATE_DB_PATH,
@@ -149,7 +151,7 @@ def main():
     log.info(f"  pi=[{args.pi_min},{args.pi_max}] step={args.pi_step}")
     log.info(f"  u=[{args.u_min},{args.u_max}] step={args.u_step}")
     log.info(f"  rate=[{args.rate_min},{args.rate_max}] step={args.rate_step}")
-    log.info(f"  model={args.model}  out={args.out}  resume={args.resume}")
+    log.info(f"  model={args.model}  advisor={args.advisor}  out={args.out}  resume={args.resume}")
     log.info("=" * 60)
 
     # -- Load existing DB --------------------------------------
@@ -174,7 +176,11 @@ def main():
         return
 
     # -- LLM calls — one per unique new key ------------------─
-    advisor = DirectLLMAdvisor(OllamaBackend(model=args.model))
+    if args.advisor == "hierarchical":
+        advisor = HierarchicalLLMAdvisor(OllamaBackend(model=args.model))
+    else:
+        advisor = DirectLLMAdvisor(OllamaBackend(model=args.model))
+    log.info(f"Advisor: {args.advisor}  ({'~8 calls/point' if args.advisor == 'hierarchical' else '1 call/point'})")
     checkpoint_every = config.CHECKPOINT_EVERY_KEYS
     n_done = 0
     n_errors = 0
@@ -186,6 +192,7 @@ def main():
 
     for i, key in enumerate(new_keys):
         pi, u, rate = parse_key(key)
+        advisor.reset_episode()   # clears actor history for hierarchical; no-op for direct
         t_key = time.time()
         try:
             _, belief = advisor.get_belief_state(pi, u, rate, "unknown")

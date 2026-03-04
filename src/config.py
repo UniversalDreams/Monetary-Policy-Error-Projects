@@ -46,4 +46,4 @@ INIT_STATE_NOISE = 0.5   # std dev of Gaussian noise on initial pi and u
 
 # Offline state-keyed DB
 DEFAULT_STATE_DB_PATH  = "data/state_belief_db.json"
-CHECKPOINT_EVERY_KEYS  = 200   # save DB every N new LLM calls
+CHECKPOINT_EVERY_KEYS  = 10   # save DB every N new LLM calls

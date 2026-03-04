@@ -37,7 +37,7 @@ $$\pi^{e}_{t+1} = 0.5\,\pi^{e}_t + 0.5\,\pi_{t+1}$$
 
 **Supply shock** (active for `duration ∈ [12, 24]` steps, scale $s \in [0.4, 1.6]$):
 
-$$\epsilon^{u}_t \mathrel{+}= 1.0\cdot s, \quad \epsilon^{\pi}_t \mathrel{+}= 2.0\cdot s, \quad \text{real rate gap} = \max(\text{real rate gap},\; 0)$$
+$$\epsilon^{u}_t \mathrel{+=} 1.0\cdot s, \quad \epsilon^{\pi}_t \mathrel{+=} 2.0\cdot s, \quad \text{real rate gap} = \max(\text{real rate gap},\; 0)$$
 
 The rate-gap floor prevents monetary stimulus from reducing unemployment during supply constraints.
 
@@ -64,9 +64,14 @@ Wraps `MacroSimulator`. Key properties:
 
 $$R_t = -\bigl[(\pi_t - \pi^{*})^{2} + (u_t - u^{*})^{2} + P(u_t) + 1.5\,\Delta r_t^{2}\bigr] + B_t$$
 
-$$P(u_t) = \begin{cases} 5\,(u_t - 6)^{2} & \text{if } u_t > 6\% \\ 0 & \text{otherwise} \end{cases}$$
+$$
+P(u_t) = \begin{cases}
+5\,(u_t - 6)^{2} & \text{if } u_t > 6\% \\
+0 & \text{otherwise}
+\end{cases}
+$$
 
-$$B_t = \exp\!\left(-\tfrac{1}{2}\left[\left(\tfrac{\pi_t - \pi^{*}}{\sigma}\right)^{\!2} + \left(\tfrac{u_t - u^{*}}{\sigma}\right)^{\!2}\right]\right), \quad \sigma = 0.5\%$$
+$$B_t = \exp\left(-\frac{1}{2}\left[\left(\frac{\pi_t - \pi^{*}}{\sigma}\right)^{2} + \left(\frac{u_t - u^{*}}{\sigma}\right)^{2}\right]\right), \quad \sigma = 0.5\%$$
 
 | Symbol | Meaning |
 |---|---|
@@ -88,7 +93,7 @@ With $r^{*} = 2\%$, $\pi^{*} = 2\%$, $u^{*} = 4\%$, $\phi_{\pi} = 0.5$, $\phi_u 
 
 $$r^{*}_t = 2 + \pi_t + 0.5(\pi_t - 2) - 0.5(u_t - 4)$$
 
-The desired rate change $\Delta r^{*}_t = r^{*}_t - r_t$ is then rounded to the nearest discrete action in $\{{\pm0.75, \pm0.50, \pm0.25, 0.00}\}$.
+The desired rate change $\Delta r^{*}_t = r^{*}_t - r_t$ is then rounded to the nearest discrete action in $\{\pm0.75, \pm0.50, \pm0.25, 0.00\}$.
 
 The Taylor Rule fails during supply shocks: high inflation signals a rate hike, but the shock is simultaneously pushing unemployment up — so hiking worsens the recession.
 

@@ -38,11 +38,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import config
 from fed_env import FedEnvBase, StateKeyedLLMWrapper, MockLLMObservationWrapper
+from covid_env import CovidEnv, covid_eval as _covid_eval
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # METADATA HELPER
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def _save_metadata(run_dir: str, meta: dict) -> None:
     """Atomic JSON write of metadata.json."""
@@ -53,9 +54,9 @@ def _save_metadata(run_dir: str, meta: dict) -> None:
     os.replace(tmp, path)
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # TAYLOR RULE
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def _taylor_action(obs: dict, action_mapping: dict) -> int:
     """
@@ -90,9 +91,9 @@ def evaluate_taylor_rule(n_seeds: int) -> list[float]:
     return rewards
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # PPO EVALUATION
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def evaluate_ppo(model, env_factory, n_seeds: int, policy: str = "mlp") -> list[float]:
     rewards = []
@@ -118,9 +119,9 @@ def evaluate_ppo(model, env_factory, n_seeds: int, policy: str = "mlp") -> list[
     return rewards
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # TRAJECTORY COLLECTION  (one representative episode per condition)
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def _collect_trajectory_taylor(seed: int = 0) -> dict:
     env = FedEnvBase(llm_dim=config.LLM_DIM)
@@ -177,9 +178,9 @@ def _collect_trajectory_ppo(model, env_factory, seed: int = 0,
             "ep_reward": ep_reward}
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # SEED SCANNER
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def find_seed(criterion, max_scan: int = 500) -> int:
     """Return first seed in [0, max_scan) where criterion(shock_start, shock_end, shock_scale, max_steps) is True."""
@@ -203,9 +204,9 @@ def _find_scenario_seeds() -> dict[str, int]:
     }
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # PLOTS
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 _CONDITION_STYLES = {
     "taylor_rule": {"color": "green",     "label": "Taylor Rule"},
@@ -239,7 +240,7 @@ def plot_reward_comparison(results: dict[str, list[float]], out_dir: str) -> Non
     path = os.path.join(out_dir, "benchmark_rewards.png")
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"Saved → {path}")
+    print(f"Saved -> {path}")
 
 
 def plot_training_curves(run_dir: str, out_dir: str, window: int = 100) -> None:
@@ -291,7 +292,7 @@ def plot_training_curves(run_dir: str, out_dir: str, window: int = 100) -> None:
     path = os.path.join(out_dir, "training_curves.png")
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"Saved → {path}")
+    print(f"Saved -> {path}")
 
 
 def plot_trajectories(trajectories: dict[str, dict], out_dir: str,
@@ -349,33 +350,230 @@ def plot_trajectories(trajectories: dict[str, dict], out_dir: str,
     path = os.path.join(out_dir, filename)
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"Saved → {path}")
+    print(f"Saved -> {path}")
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # REPORTING
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def _print_table(results: dict[str, list[float]], n_seeds: int) -> str:
     taylor_mean = np.mean(results["taylor_rule"])
     lines = [
         f"Benchmark — {n_seeds} evaluation seeds",
-        "─" * 56,
-        f"{'condition':<16} {'mean':>9} {'std':>8} {'Δtaylor':>10}",
-        "─" * 56,
+        "-" * 56,
+        f"{'condition':<16} {'mean':>9} {'std':>8} {'d_taylor':>10}",
+        "-" * 56,
     ]
     for name, rewards in results.items():
         mean, std = np.mean(rewards), np.std(rewards)
         delta = mean - taylor_mean if name != "taylor_rule" else 0.0
         delta_str = f"{delta:+.2f}" if name != "taylor_rule" else "—"
         lines.append(f"{name:<16} {mean:>+9.2f} {std:>8.2f} {delta_str:>10}")
-    lines.append("─" * 56)
+    lines.append("-" * 56)
     return "\n".join(lines) + "\n"
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
+# COVID BENCHMARK
+# -------------------------------------------------------------
+
+def plot_covid_trajectories(
+    covid_results: dict[str, dict],
+    out_dir: str,
+) -> None:
+    """Overlay plot: agent trajectory vs real Fed path for each condition."""
+    from covid_env import COVID_DATA, _N_REAL
+    real_months = list(range(_N_REAL))
+    real_cpi    = COVID_DATA["cpi"]
+    real_u      = COVID_DATA["unemployment"]
+    real_effr   = COVID_DATA["effr"]
+
+    # Use actual trajectory length (may be >36 if episode extended past real data)
+    n_steps  = len(covid_results[next(iter(covid_results))]["trajectories"][0]["pi"])
+    all_months = list(range(n_steps))
+
+    # phase shading spans
+    phase1 = (2, 5)    # lockdown
+    phase2 = (14, 34)  # supply chain
+
+    conditions = list(covid_results.keys())
+    n = len(conditions)
+    fig, axes = plt.subplots(3, n, figsize=(6 * n, 10), sharex="col", sharey="row")
+    if n == 1:
+        axes = [[axes[0]], [axes[1]], [axes[2]]]
+
+    for col, cond in enumerate(conditions):
+        style = _CONDITION_STYLES.get(cond, {"color": "steelblue", "label": cond})
+        traj  = covid_results[cond]["trajectories"][0]
+        ep_r  = traj["ep_reward"]
+
+        for ax_row in axes:
+            ax = ax_row[col]
+            ax.axvspan(*phase1, color="gold",   alpha=0.18, label="Lockdown")
+            ax.axvspan(*phase2, color="salmon",  alpha=0.18, label="Supply chain")
+            if n_steps > _N_REAL:
+                ax.axvline(_N_REAL - 1, color="gray", linestyle=":", linewidth=1.2,
+                           label="Real data ends")
+            ax.grid(True, alpha=0.3)
+
+        # — Inflation —
+        ax = axes[0][col]
+        ax.plot(real_months, real_cpi, color="red", linestyle="--", linewidth=1.5,
+                label="Real CPI")
+        ax.plot(all_months, traj["pi"], color="red", linewidth=2, label="Agent sim pi")
+        ax.axhline(2.0, color="red", linestyle=":", alpha=0.4)
+        ax.set_title(f"{style['label']}\n(reward: {ep_r:+.0f})", fontweight="bold")
+        ax.set_ylabel("Inflation (%)")
+        ax.legend(loc="upper left", fontsize=7)
+
+        # — Unemployment —
+        ax = axes[1][col]
+        ax.plot(real_months, real_u,   color="blue", linestyle="--", linewidth=1.5,
+                label="Real U-3")
+        ax.plot(all_months, traj["u"], color="blue", linewidth=2, label="Agent sim u")
+        ax.axhline(4.0, color="blue", linestyle=":", alpha=0.4)
+        ax.set_ylabel("Unemployment (%)")
+        ax.legend(loc="upper right", fontsize=7)
+
+        # — Policy rate —
+        ax = axes[2][col]
+        ax.step(real_months, real_effr,    color="green", linestyle="--",
+                linewidth=1.5, where="post", label="Real EFFR")
+        ax.step(all_months,  traj["rate"], color=style["color"],
+                linewidth=2,   where="post", label="Agent rate")
+        ax.set_ylabel("Policy Rate (%)")
+        ax.set_xlabel("Month (0=Jan 2020)")
+        ax.legend(loc="upper left", fontsize=7)
+
+    # x-tick labels: every 6 months, starting Jan 2020
+    tick_step = 6
+    ticks = list(range(0, n_steps, tick_step))
+    def _month_label(t):
+        year  = 2020 + (t // 12)
+        month = ["Jan","Feb","Mar","Apr","May","Jun",
+                 "Jul","Aug","Sep","Oct","Nov","Dec"][t % 12]
+        return f"{month}'{str(year)[2:]}"
+    labels = [_month_label(t) for t in ticks]
+    for col in range(n):
+        axes[2][col].set_xticks(ticks)
+        axes[2][col].set_xticklabels(labels, rotation=45, fontsize=7)
+
+    end_year = 2020 + (n_steps // 12)
+    fig.suptitle(f"COVID-Era Benchmark  (Jan 2020 - {_month_label(n_steps - 1)})",
+                 fontweight="bold", fontsize=13)
+    plt.tight_layout()
+    path = os.path.join(out_dir, "covid_trajectories.png")
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved -> {path}")
+
+
+def _run_covid_benchmark(
+    args,
+    out_dir: str,
+    base_model=None,
+    llm_model=None,
+    oracle_model=None,
+    run_meta: dict | None = None,
+) -> None:
+    """Evaluate all available conditions on CovidEnv and save table + plots."""
+    n = args.covid_runs
+    db_path = args.db
+    policy  = args.policy
+
+    covid_results: dict[str, dict] = {}
+
+    print(f"\n{'='*56}")
+    print(f"COVID-ERA BENCHMARK  (counterfactual, {n} runs each)")
+    print(f"{'='*56}")
+
+    print("\n>>> Taylor Rule ...")
+    covid_results["taylor_rule"] = _covid_eval(model=None, n_runs=n, policy=policy)
+    print(f"    mean={covid_results['taylor_rule']['mean_reward']:+.2f}  "
+          f"std={covid_results['taylor_rule']['std_reward']:.2f}")
+
+    if base_model is not None:
+        print("\n>>> Baseline PPO ...")
+        covid_results["baseline"] = _covid_eval(
+            model=base_model,
+            env_factory=lambda: CovidEnv(),
+            n_runs=n, policy=policy,
+        )
+        print(f"    mean={covid_results['baseline']['mean_reward']:+.2f}  "
+              f"std={covid_results['baseline']['std_reward']:.2f}")
+
+    if llm_model is not None and os.path.exists(db_path):
+        print("\n>>> LLM PPO ...")
+        _db = db_path
+        covid_results["llm"] = _covid_eval(
+            model=llm_model,
+            env_factory=lambda: StateKeyedLLMWrapper(CovidEnv(), db_path=_db),
+            n_runs=n, policy=policy,
+        )
+        print(f"    mean={covid_results['llm']['mean_reward']:+.2f}  "
+              f"std={covid_results['llm']['std_reward']:.2f}")
+
+    if oracle_model is not None:
+        print("\n>>> Oracle PPO ...")
+        covid_results["oracle"] = _covid_eval(
+            model=oracle_model,
+            env_factory=lambda: MockLLMObservationWrapper(CovidEnv()),
+            n_runs=n, policy=policy,
+        )
+        print(f"    mean={covid_results['oracle']['mean_reward']:+.2f}  "
+              f"std={covid_results['oracle']['std_reward']:.2f}")
+
+    # — Table —
+    taylor_mean = covid_results["taylor_rule"]["mean_reward"]
+    lines = [
+        f"COVID Benchmark — {n} runs each",
+        "-" * 56,
+        f"{'condition':<16} {'mean':>9} {'std':>8} {'d_taylor':>10}",
+        "-" * 56,
+    ]
+    for name, res in covid_results.items():
+        mean, std = res["mean_reward"], res["std_reward"]
+        delta = mean - taylor_mean if name != "taylor_rule" else 0.0
+        delta_str = f"{delta:+.2f}" if name != "taylor_rule" else "—"
+        lines.append(f"{name:<16} {mean:>+9.2f} {std:>8.2f} {delta_str:>10}")
+    lines.append("-" * 56)
+    table = "\n".join(lines) + "\n"
+    print("\n" + table)
+
+    txt_path = os.path.join(out_dir, "covid_benchmark.txt")
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write(table)
+    print(f"Saved -> {txt_path}")
+
+    # — CSV —
+    csv_path = os.path.join(out_dir, "covid_benchmark.csv")
+    conds = list(covid_results.keys())
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["run"] + conds)
+        for i in range(n):
+            writer.writerow([i] + [round(covid_results[c]["rewards"][i], 4) for c in conds])
+    print(f"Saved -> {csv_path}")
+
+    # — Plot —
+    plot_covid_trajectories(covid_results, out_dir)
+
+    # — Update metadata —
+    if run_meta is not None:
+        run_meta.setdefault("covid_benchmark", {}).update({
+            "runs": n,
+            "evaluated_at": datetime.now().isoformat(timespec="seconds"),
+            "conditions": {
+                name: {"mean": round(res["mean_reward"], 4), "std": round(res["std_reward"], 4)}
+                for name, res in covid_results.items()
+            },
+        })
+
+
+# -------------------------------------------------------------
 # MAIN
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(description="Benchmark all conditions vs Taylor Rule")
@@ -398,9 +596,13 @@ def main():
                         help="Policy architecture used during training (default: mlp)")
     parser.add_argument("--ema",           action="store_true",
                         help="Use best_model_ema.zip instead of best_model.zip during auto-discovery")
+    parser.add_argument("--covid",         action="store_true",
+                        help="Also benchmark all conditions on the COVID-era environment (Jan 2020–Dec 2022)")
+    parser.add_argument("--covid-runs",    type=int, default=1,
+                        help="Number of independent runs per condition for COVID eval (default: 1)")
     args = parser.parse_args()
 
-    # ── Resolve run dir, model paths, and metadata ─────────────
+    # -- Resolve run dir, model paths, and metadata -------------
     run_meta = None
     run_dir = args.run
 
@@ -451,24 +653,25 @@ def main():
             return RecurrentPPO.load(path)
         return PPO.load(path)
 
+    base_model = llm_model = oracle_model = None
     results:          dict[str, list[float]]      = {}
     scenario_seeds  = _find_scenario_seeds()
     print(f"Scenario seeds: {scenario_seeds}")
     traj_by_scenario: dict[str, dict[str, dict]] = {s: {} for s in scenario_seeds}
 
-    # ── Taylor Rule ───────────────────────────────────────────
-    print(f"\n>>> Taylor Rule  ({args.seeds} seeds) …")
+    # -- Taylor Rule -------------------------------------------
+    print(f"\n>>> Taylor Rule  ({args.seeds} seeds) ...")
     results["taylor_rule"] = evaluate_taylor_rule(args.seeds)
     for scen_label, scen_seed in scenario_seeds.items():
         traj_by_scenario[scen_label]["taylor_rule"] = _collect_trajectory_taylor(seed=scen_seed)
     print(f"    mean={np.mean(results['taylor_rule']):+.2f}  "
           f"std={np.std(results['taylor_rule']):.2f}")
 
-    # ── Baseline PPO ──────────────────────────────────────────
+    # -- Baseline PPO ------------------------------------------
     if args.base_model:
-        print(f"\n>>> Baseline PPO  loading from {args.base_model} …")
+        print(f"\n>>> Baseline PPO  loading from {args.base_model} ...")
         base_model = _load_model(args.base_model)
-        print(f"    Evaluating on {args.seeds} seeds …")
+        print(f"    Evaluating on {args.seeds} seeds ...")
         results["baseline"] = evaluate_ppo(
             base_model,
             lambda: FedEnvBase(llm_dim=config.LLM_DIM),
@@ -483,15 +686,15 @@ def main():
         print(f"    mean={np.mean(results['baseline']):+.2f}  "
               f"std={np.std(results['baseline']):.2f}")
 
-    # ── LLM PPO ───────────────────────────────────────────────
+    # -- LLM PPO -----------------------------------------------
     if args.offline_model:
         if not os.path.exists(args.db):
             print(f"\nERROR: DB not found at {args.db}")
             print("Run build_state_db.py first, or pass --db <path>")
             sys.exit(1)
-        print(f"\n>>> LLM PPO  loading from {args.offline_model} …")
+        print(f"\n>>> LLM PPO  loading from {args.offline_model} ...")
         llm_model = _load_model(args.offline_model)
-        print(f"    Evaluating on {args.seeds} seeds …")
+        print(f"    Evaluating on {args.seeds} seeds ...")
         db_path = args.db
         results["llm"] = evaluate_ppo(
             llm_model,
@@ -508,11 +711,11 @@ def main():
         print(f"    mean={np.mean(results['llm']):+.2f}  "
               f"std={np.std(results['llm']):.2f}")
 
-    # ── Oracle PPO ────────────────────────────────────────────
+    # -- Oracle PPO --------------------------------------------
     if args.oracle_model:
-        print(f"\n>>> Oracle PPO  loading from {args.oracle_model} …")
+        print(f"\n>>> Oracle PPO  loading from {args.oracle_model} ...")
         oracle_model = _load_model(args.oracle_model)
-        print(f"    Evaluating on {args.seeds} seeds …")
+        print(f"    Evaluating on {args.seeds} seeds ...")
         results["oracle"] = evaluate_ppo(
             oracle_model,
             lambda: MockLLMObservationWrapper(FedEnvBase(llm_dim=config.LLM_DIM)),
@@ -528,16 +731,16 @@ def main():
         print(f"    mean={np.mean(results['oracle']):+.2f}  "
               f"std={np.std(results['oracle']):.2f}")
 
-    # ── Table ─────────────────────────────────────────────────
+    # -- Table -------------------------------------------------
     table = _print_table(results, args.seeds)
     print("\n" + table)
 
     txt_path = os.path.join(out_dir, "benchmark.txt")
     with open(txt_path, "w", encoding="utf-8") as f:
         f.write(table)
-    print(f"Saved → {txt_path}")
+    print(f"Saved -> {txt_path}")
 
-    # ── Per-seed CSV ──────────────────────────────────────────
+    # -- Per-seed CSV ------------------------------------------
     csv_path = os.path.join(out_dir, "benchmark.csv")
     conditions = list(results.keys())
     with open(csv_path, "w", newline="") as f:
@@ -545,9 +748,9 @@ def main():
         writer.writerow(["seed"] + conditions)
         for seed in range(args.seeds):
             writer.writerow([seed] + [round(results[c][seed], 4) for c in conditions])
-    print(f"Saved → {csv_path}")
+    print(f"Saved -> {csv_path}")
 
-    # ── Plots ─────────────────────────────────────────────────
+    # -- Plots -------------------------------------------------
     if run_dir:
         plot_training_curves(run_dir, out_dir)
     plot_reward_comparison(results, out_dir)
@@ -559,7 +762,17 @@ def main():
             filename=f"benchmark_trajectories_{slug}.png",
         )
 
-    # ── Update metadata.json ──────────────────────────────────
+    # -- COVID benchmark ---------------------------------------
+    if args.covid:
+        _run_covid_benchmark(
+            args, out_dir,
+            base_model=base_model,
+            llm_model=llm_model,
+            oracle_model=oracle_model,
+            run_meta=run_meta,
+        )
+
+    # -- Update metadata.json ----------------------------------
     if run_meta is not None and run_dir:
         run_meta["benchmark"] = {
             "seeds": args.seeds,
@@ -573,7 +786,7 @@ def main():
             },
         }
         _save_metadata(run_dir, run_meta)
-        print(f"Metadata updated → {os.path.join(run_dir, 'metadata.json')}")
+        print(f"Metadata updated -> {os.path.join(run_dir, 'metadata.json')}")
 
 
 if __name__ == "__main__":

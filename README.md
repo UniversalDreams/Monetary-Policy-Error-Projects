@@ -21,16 +21,39 @@ runs/              — training checkpoints and logs
 ## Environment
 
 ### `MacroSimulator`
-Lightweight macro model (no LLM). Drives inflation and unemployment via:
-- **IS curve**: unemployment responds to the real rate gap
-- **Phillips curve**: inflation responds to unemployment gap
-- **Supply shock**: stagflation regime with simultaneous inflation push and unemployment push; rate cuts are capped during shocks (supply constraints)
+Lightweight discrete-time macro model. Three coupled equations per step:
 
-Parameters: `alpha=0.5` (IS slope), `kappa=0.2` (Phillips slope), `rho_u=rho_pi=0.7` (momentum).
+**IS curve** — unemployment responds to the real rate gap:
+
+$$u_{t+1} = u^* + \rho_u(u_t - u^*) + \alpha\underbrace{(r_t - \pi^e_t - r^*)}_{\text{real rate gap}} + \epsilon^u_t$$
+
+**Phillips curve** — inflation responds to the updated unemployment gap:
+
+$$\pi_{t+1} = \pi^* + \rho_\pi(\pi_t - \pi^*) - \kappa(u_{t+1} - u^*) + \epsilon^\pi_t$$
+
+**Inflation expectations** — adaptive (50/50 lag):
+
+$$\pi^e_{t+1} = 0.5\,\pi^e_t + 0.5\,\pi_{t+1}$$
+
+**Supply shock** (active for `duration ∈ [12, 24]` steps, scale $s \in [0.4, 1.6]$):
+
+$$\epsilon^u_t \mathrel{+}= 1.0\cdot s, \quad \epsilon^\pi_t \mathrel{+}= 2.0\cdot s, \quad \text{real rate gap} = \max(\text{real rate gap},\; 0)$$
+
+The rate-gap floor prevents monetary stimulus from reducing unemployment during supply constraints.
+
+| Parameter | Value | Meaning |
+|---|---|---|
+| $\alpha$ | 0.5 | IS slope — sensitivity of unemployment to real rate gap |
+| $\kappa$ | 0.2 | Phillips slope |
+| $\rho_u = \rho_\pi$ | 0.7 | AR(1) momentum for unemployment and inflation |
+| $u^*$ | 4% | Unemployment target (natural rate) |
+| $\pi^*$ | 2% | Inflation target |
+| $r^*$ | 2% | Neutral real rate |
+| $\epsilon^u, \epsilon^\pi$ | $\mathcal{N}(0,\, 0.1)$ | Base stochastic shocks |
 
 ### `FedEnvBase(gym.Env)`
 Wraps `MacroSimulator`. Key properties:
-- **Action space**: 7 discrete rate changes — `{±0.75, ±0.50, ±0.25, 0.00}` bps
+- **Action space**: 7 discrete rate changes — `{±0.75, ±0.50, ±0.25, 0.00}` pp (percentage points)
 - **Observation space**: `Dict("macro": Box(3,), "llm_belief": Box(llm_dim,))`
   - `macro`: `[inflation, unemployment, current_rate]`
   - `llm_belief`: zeros by default — filled by a wrapper
@@ -38,14 +61,36 @@ Wraps `MacroSimulator`. Key properties:
 - **Shock schedule**: randomized per episode — `shock_start ∈ [10, 40]`, `duration ∈ [12, 24]`, `scale ∈ [0.4, 1.6]`; 30% of episodes have no shock
 
 **Reward function:**
-```
-reward = -(π_loss + u_loss + u_fear_penalty + rate_volatility_loss) + soft_landing_bonus
-```
-- `π_loss = (π − π*)²`, `u_loss = (u − u*)²`  — squared gaps from targets (π*=2%, u*=4%)
-- `u_fear_penalty = 5·(u − 6)²` if `u > 6%` — asymmetric unemployment penalty
-- `rate_volatility_loss = 1.5·Δrate²` — penalizes erratic moves
-- `soft_landing_bonus = exp(−½·((π_gap/σ)² + (u_gap/σ)²))` — Gaussian peak at targets (σ=0.5%)
-- Clipped at `−250` per step
+
+$$R_t = -\bigl[(\pi_t - \pi^*)^2 + (u_t - u^*)^2 + P(u_t) + 1.5\,\Delta r_t^2\bigr] + B_t$$
+
+$$P(u_t) = \begin{cases} 5\,(u_t - 6)^2 & \text{if } u_t > 6\% \\ 0 & \text{otherwise} \end{cases}$$
+
+$$B_t = \exp\!\left(-\tfrac{1}{2}\left[\left(\tfrac{\pi_t - \pi^*}{\sigma}\right)^{\!2} + \left(\tfrac{u_t - u^*}{\sigma}\right)^{\!2}\right]\right), \quad \sigma = 0.5\%$$
+
+| Symbol | Meaning |
+|---|---|
+| $\pi_t$ | inflation rate at step $t$ |
+| $u_t$ | unemployment rate at step $t$ |
+| $\Delta r_t$ | rate change chosen at step $t$ |
+| $\sigma = 0.5\%$ | soft-landing bandwidth |
+| $\pi^*, u^*, r^*$ | targets — see MacroSimulator parameter table above |
+
+Clipped at $-250$ per step.
+
+### Taylor Rule Baseline
+
+The classical heuristic policy used as a performance benchmark (`src/benchmark.py`).
+
+$$r^*_t = r^* + \pi_t + \phi_\pi(\pi_t - \pi^*) - \phi_u(u_t - u^*)$$
+
+With $r^* = 2\%$, $\pi^* = 2\%$, $u^* = 4\%$, $\phi_\pi = 0.5$, $\phi_u = 0.5$, this expands to:
+
+$$r^*_t = 2 + \pi_t + 0.5(\pi_t - 2) - 0.5(u_t - 4)$$
+
+The desired rate change $\Delta r^*_t = r^*_t - r_t$ is then rounded to the nearest discrete action in $\{{\pm0.75, \pm0.50, \pm0.25, 0.00}\}$.
+
+The Taylor Rule fails during supply shocks: high inflation signals a rate hike, but the shock is simultaneously pushing unemployment up — so hiking worsens the recession.
 
 ---
 
@@ -94,11 +139,23 @@ AnthropicBackend(model="claude-haiku-4-5-20251001")  # Anthropic API, default fo
 | Group | Key params |
 |---|---|
 | PPO (MLP) | `LR=5e-4`, `N_STEPS=240`, `BATCH_SIZE=60` |
-| RecurrentPPO (LSTM) | `LSTM_LR=3e-4`, `LSTM_CLIP_RANGE=0.05`, `LSTM_ENT_COEF=0.0` |
+| RecurrentPPO shared | `LSTM_N_STEPS=1024`, `LSTM_BATCH_SIZE=128`, `LSTM_N_EPOCHS=4` |
+| RecurrentPPO per-condition | see table below |
 | Reward | `REWARD_CLIP=-250`, `RATE_VOLATILITY_WEIGHT=1.5`, `SOFT_LANDING_WEIGHT=1.0`, `SOFT_LANDING_SIGMA=0.5` |
 | Environment | `LLM_DIM=5`, `MAX_STEPS=120`, `P_NO_SHOCK=0.30`, `SHOCK_SCALE_MIN/MAX=0.4/1.6` |
 | Training | `DEFAULT_EPISODES=500` (live LLM), `DEFAULT_BASE_EPISODES=10000` (base), `N_ENVS=4` |
-| Offline DB | `DEFAULT_STATE_DB_PATH="data/state_belief_db.json"`, `CHECKPOINT_EVERY_KEYS=200` |
+| Offline DB | `DEFAULT_STATE_DB_PATH="data/state_belief_db.json"`, `CHECKPOINT_EVERY_KEYS=10` |
+
+**Per-condition LSTM hyperparameters** (LSTM policy only):
+
+| Condition | LR | LR_END | LR_DECAY_START | ENT_COEF | CLIP_RANGE |
+|---|---|---|---|---|---|
+| baseline | 3e-4 | 5e-5 | 0.3 | 0.0 | 0.10 |
+| oracle   | 3e-4 | 1e-5 | 0.4 | 0.0 | 0.05 |
+| llm      | 2e-4 | 1e-5 | 0.3 | 0.0 | 0.08 |
+
+`LR_DECAY_START` is the fraction of training remaining when LR decay begins
+(e.g. 0.3 → decay starts at 70% through training).
 
 ---
 

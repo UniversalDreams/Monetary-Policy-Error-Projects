@@ -25,19 +25,27 @@ Lightweight discrete-time macro model. Three coupled equations per step:
 
 **IS curve** — unemployment responds to the real rate gap:
 
-$$u_{t+1} = u^{*} + \rho_u(u_t - u^{*}) + \alpha(r_t - \pi^{e}_t - r^{*}) + \epsilon^{u}_t$$
+$$
+u_{t+1} = u^{*} + \rho_u(u_t - u^{*}) + \alpha(r_t - \pi^{e}_t - r^{*}) + \epsilon^{u}_t
+$$
 
 **Phillips curve** — inflation responds to the updated unemployment gap:
 
-$$\pi_{t+1} = \pi^{*} + \rho_{\pi}(\pi_t - \pi^{*}) - \kappa(u_{t+1} - u^{*}) + \epsilon^{\pi}_t$$
+$$
+\pi_{t+1} = \pi^{*} + \rho_{\pi}(\pi_t - \pi^{*}) - \kappa(u_{t+1} - u^{*}) + \epsilon^{\pi}_t
+$$
 
 **Inflation expectations** — adaptive (50/50 lag):
 
-$$\pi^{e}_{t+1} = 0.5\,\pi^{e}_t + 0.5\,\pi_{t+1}$$
+$$
+\pi^{e}_{t+1} = 0.5\,\pi^{e}_t + 0.5\,\pi_{t+1}
+$$
 
 **Supply shock** (active for `duration ∈ [12, 24]` steps, scale $s \in [0.4, 1.6]$):
 
-$$\epsilon^{u}_t \mathrel{+=} 1.0\cdot s, \quad \epsilon^{\pi}_t \mathrel{+=} 2.0\cdot s, \quad \text{real rate gap} = \max(\text{real rate gap},\; 0)$$
+$$
+\epsilon^{u}_t \mathrel{+=} 1.0\cdot s, \quad \epsilon^{\pi}_t \mathrel{+=} 2.0\cdot s, \quad \text{real rate gap} = \max(\text{real rate gap},\; 0)
+$$
 
 The rate-gap floor prevents monetary stimulus from reducing unemployment during supply constraints.
 
@@ -62,7 +70,9 @@ Wraps `MacroSimulator`. Key properties:
 
 **Reward function:**
 
-$$R_t = -\bigl[(\pi_t - \pi^{*})^{2} + (u_t - u^{*})^{2} + P(u_t) + 1.5\,\Delta r_t^{2}\bigr] + B_t$$
+$$
+R_t = -\bigl[(\pi_t - \pi^{*})^{2} + (u_t - u^{*})^{2} + P(u_t) + 1.5\,\Delta r_t^{2}\bigr] + B_t
+$$
 
 $$
 P(u_t) = \begin{cases}
@@ -71,7 +81,9 @@ P(u_t) = \begin{cases}
 \end{cases}
 $$
 
-$$B_t = \exp\left(-\frac{1}{2}\left[\left(\frac{\pi_t - \pi^{*}}{\sigma}\right)^{2} + \left(\frac{u_t - u^{*}}{\sigma}\right)^{2}\right]\right), \quad \sigma = 0.5\%$$
+$$
+B_t = \exp\left(-\frac{1}{2}\left[\left(\frac{\pi_t - \pi^{*}}{\sigma}\right)^{2} + \left(\frac{u_t - u^{*}}{\sigma}\right)^{2}\right]\right), \quad \sigma = 0.5\%
+$$
 
 | Symbol | Meaning |
 |---|---|
@@ -87,11 +99,15 @@ Clipped at $-250$ per step.
 
 The classical heuristic policy used as a performance benchmark (`src/benchmark.py`).
 
-$$r^{*}_t = r^{*} + \pi_t + \phi_{\pi}(\pi_t - \pi^{*}) - \phi_u(u_t - u^{*})$$
+$$
+r^{*}_t = r^{*} + \pi_t + \phi_{\pi}(\pi_t - \pi^{*}) - \phi_u(u_t - u^{*})
+$$
 
 With $r^{*} = 2\%$, $\pi^{*} = 2\%$, $u^{*} = 4\%$, $\phi_{\pi} = 0.5$, $\phi_u = 0.5$, this expands to:
 
-$$r^{*}_t = 2 + \pi_t + 0.5(\pi_t - 2) - 0.5(u_t - 4)$$
+$$
+r^{*}_t = 2 + \pi_t + 0.5(\pi_t - 2) - 0.5(u_t - 4)
+$$
 
 The desired rate change $\Delta r^{*}_t = r^{*}_t - r_t$ is then rounded to the nearest discrete action in $\{\pm0.75, \pm0.50, \pm0.25, 0.00\}$.
 

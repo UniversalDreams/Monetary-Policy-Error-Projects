@@ -61,21 +61,22 @@ u^{*}
 +
 0.5\,\pi_{t+1}
 ```
+
 ### Supply Shock
 
-Active for `duration ∈ [12, 24]` steps, scale \( s \in [0.4, 1.6] \).
+Active for duration in [12, 24] steps, scale s in [0.4, 1.6].
 
-$$
+```math
 \epsilon^{u}_t = \epsilon^{u}_t + 1.0\, s
-$$
+```
 
-$$
+```math
 \epsilon^{\pi}_t = \epsilon^{\pi}_t + 2.0\, s
-$$
+```
 
-$$
-\text{real rate gap} = \max(\text{real rate gap}, 0)
-$$
+```math
+\text{real_rate_gap} = \max(\text{real_rate_gap}, 0)
+```
 
 The rate-gap floor prevents monetary stimulus from reducing unemployment during supply constraints.
 
@@ -85,13 +86,13 @@ The rate-gap floor prevents monetary stimulus from reducing unemployment during 
 
 | Parameter | Value | Meaning |
 |-----------|-------|---------|
-| \( \alpha \) | 0.5 | IS slope — unemployment sensitivity to real rate gap |
-| \( \kappa \) | 0.2 | Phillips slope |
-| \( \rho_u = \rho_{\pi} \) | 0.7 | AR(1) momentum |
-| \( u^{*} \) | 4 percent | Natural unemployment rate |
-| \( \pi^{*} \) | 2 percent | Inflation target |
-| \( r^{*} \) | 2 percent | Neutral real rate |
-| \( \epsilon^{u}, \epsilon^{\pi} \) | \( \mathcal{N}(0, 0.1) \) | Base stochastic shocks |
+| α | 0.5 | IS slope — unemployment sensitivity to real rate gap |
+| κ | 0.2 | Phillips slope |
+| ρ_u = ρ_π | 0.7 | AR(1) momentum |
+| u* | 4 percent | Natural unemployment rate |
+| π* | 2 percent | Inflation target |
+| r* | 2 percent | Neutral real rate |
+| εᵘ, εᵖ | N(0, 0.1) | Base stochastic shocks |
 
 ---
 
@@ -99,13 +100,13 @@ The rate-gap floor prevents monetary stimulus from reducing unemployment during 
 
 Wraps `MacroSimulator`.
 
-**Action space**
+### Action space
 
 ```
-{ ±0.75, ±0.50, ±0.25, 0.00 }  percentage points
+{ ±0.75, ±0.50, ±0.25, 0.00 } percentage points
 ```
 
-**Observation space**
+### Observation space
 
 ```
 Dict(
@@ -114,23 +115,23 @@ Dict(
 )
 ```
 
-- `macro` = `[inflation, unemployment, current_rate]`
-- `llm_belief` = zeros by default (filled by wrapper)
+- macro = `[inflation, unemployment, current_rate]`
+- llm_belief = zeros by default (filled by wrapper)
 
-**Episode length**: 120 steps
+Episode length: 120 steps
 
-**Shock schedule per episode**
+Shock schedule per episode:
 
-- `shock_start ∈ [10, 40]`
-- `duration ∈ [12, 24]`
-- `scale ∈ [0.4, 1.6]`
+- shock_start in [10, 40]
+- duration in [12, 24]
+- scale in [0.4, 1.6]
 - 30 percent of episodes have no shock
 
 ---
 
 ## Reward Function
 
-$$
+```math
 R_t
 =
 -
@@ -141,29 +142,31 @@ R_t
 +
 P(u_t)
 +
-1.5\,(\Delta r_t)^2
+1.5(\Delta r_t)^2
 \Big]
 +
 B_t
-$$
+```
 
 ### Unemployment penalty
 
-$$
+```math
 P(u_t)
 =
-\begin{cases}
-5 (u_t - 6)^2 & \text{if } u_t > 6 \\
-0 & \text{otherwise}
-\end{cases}
-$$
+5(u_t - 6)^2 \quad \text{if } u_t > 6
+```
+
+```math
+P(u_t) = 0 \quad \text{otherwise}
+```
 
 ### Soft landing bonus
 
-$$
+```math
 B_t
 =
-\exp\left(
+\exp
+\left(
 -\frac{1}{2}
 \left[
 \left(\frac{\pi_t - \pi^{*}}{\sigma}\right)^2
@@ -171,13 +174,11 @@ B_t
 \left(\frac{u_t - u^{*}}{\sigma}\right)^2
 \right]
 \right)
-$$
+```
 
-where
-
-$$
+```math
 \sigma = 0.5
-$$
+```
 
 Clipped at -250 per step.
 
@@ -187,7 +188,7 @@ Clipped at -250 per step.
 
 Classical heuristic benchmark (`src/benchmark.py`).
 
-$$
+```math
 r^{*}_t
 =
 r^{*}
@@ -197,19 +198,19 @@ r^{*}
 \phi_{\pi}(\pi_t - \pi^{*})
 -
 \phi_u (u_t - u^{*})
-$$
+```
 
 With:
 
-- \( r^{*} = 2 \)
-- \( \pi^{*} = 2 \)
-- \( u^{*} = 4 \)
-- \( \phi_{\pi} = 0.5 \)
-- \( \phi_u = 0.5 \)
+- r* = 2  
+- π* = 2  
+- u* = 4  
+- φ_π = 0.5  
+- φ_u = 0.5  
 
 Expanded:
 
-$$
+```math
 r^{*}_t
 =
 2
@@ -219,13 +220,13 @@ r^{*}_t
 0.5(\pi_t - 2)
 -
 0.5(u_t - 4)
-$$
+```
 
 Desired rate change:
 
-$$
+```math
 \Delta r^{*}_t = r^{*}_t - r_t
-$$
+```
 
 Rounded to nearest discrete action in:
 
@@ -300,41 +301,41 @@ AnthropicBackend(model="claude-haiku-4-5-20251001")
 
 ### PPO (MLP)
 
-- `LR = 5e-4`
-- `N_STEPS = 240`
-- `BATCH_SIZE = 60`
+- LR = 5e-4  
+- N_STEPS = 240  
+- BATCH_SIZE = 60  
 
 ### RecurrentPPO (Shared)
 
-- `LSTM_N_STEPS = 1024`
-- `LSTM_BATCH_SIZE = 128`
-- `LSTM_N_EPOCHS = 4`
+- LSTM_N_STEPS = 1024  
+- LSTM_BATCH_SIZE = 128  
+- LSTM_N_EPOCHS = 4  
 
 ### Reward
 
-- `REWARD_CLIP = -250`
-- `RATE_VOLATILITY_WEIGHT = 1.5`
-- `SOFT_LANDING_WEIGHT = 1.0`
-- `SOFT_LANDING_SIGMA = 0.5`
+- REWARD_CLIP = -250  
+- RATE_VOLATILITY_WEIGHT = 1.5  
+- SOFT_LANDING_WEIGHT = 1.0  
+- SOFT_LANDING_SIGMA = 0.5  
 
 ### Environment
 
-- `LLM_DIM = 5`
-- `MAX_STEPS = 120`
-- `P_NO_SHOCK = 0.30`
-- `SHOCK_SCALE_MIN = 0.4`
-- `SHOCK_SCALE_MAX = 1.6`
+- LLM_DIM = 5  
+- MAX_STEPS = 120  
+- P_NO_SHOCK = 0.30  
+- SHOCK_SCALE_MIN = 0.4  
+- SHOCK_SCALE_MAX = 1.6  
 
 ### Training
 
-- `DEFAULT_EPISODES = 500`
-- `DEFAULT_BASE_EPISODES = 10000`
-- `N_ENVS = 4`
+- DEFAULT_EPISODES = 500  
+- DEFAULT_BASE_EPISODES = 10000  
+- N_ENVS = 4  
 
 ### Offline DB
 
-- `DEFAULT_STATE_DB_PATH = "data/state_belief_db.json"`
-- `CHECKPOINT_EVERY_KEYS = 10`
+- DEFAULT_STATE_DB_PATH = "data/state_belief_db.json"  
+- CHECKPOINT_EVERY_KEYS = 10  
 
 ---
 

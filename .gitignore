@@ -14,3 +14,7 @@ __pycache__/
 *.pyc
 *.tmp
 *.log
+
+
+*model.zip
+*model_ema.zip

@@ -75,7 +75,7 @@ Active for duration in [12, 24] steps, scale s in [0.4, 1.6].
 ```
 
 ```math
-\text{real_rate_gap} = \max(\text{real_rate_gap}, 0)
+g_t = \max(g_t, 0)
 ```
 
 The rate-gap floor prevents monetary stimulus from reducing unemployment during supply constraints.

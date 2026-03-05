@@ -3,11 +3,6 @@ src/plot_belief_db.py — Heatmaps of the state-keyed belief DB.
 
 Shows each of the 5 belief dimensions as a 2D heatmap over (pi, u),
 either averaged across all rate values or sliced at a specific rate.
-
-Usage:
-    .venv/Scripts/python src/plot_belief_db.py --db data/state_belief_db_hierarchical.json
-    .venv/Scripts/python src/plot_belief_db.py --db data/state_belief_db_hierarchical.json --fix-rate 4.0
-    .venv/Scripts/python src/plot_belief_db.py --db data/state_belief_db_hierarchical.json --out plots/belief_heatmap.png
 """
 
 import argparse

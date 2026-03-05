@@ -23,20 +23,13 @@ sys.path.insert(0, os.path.dirname(__file__))
 import config
 from fed_env import MacroSimulator
 
-# ─────────────────────────────────────────────────────────────
-# REWARD CONSTANTS  (mirror fed_env.py)
-# ─────────────────────────────────────────────────────────────
-
+# Reward constants (mirror fed_env.py)
 _REWARD_CLIP            = config.REWARD_CLIP
 _RATE_VOLATILITY_WEIGHT = config.RATE_VOLATILITY_WEIGHT
 _SOFT_LANDING_WEIGHT    = config.SOFT_LANDING_WEIGHT
 _SOFT_LANDING_SIGMA     = config.SOFT_LANDING_SIGMA
 
-# ─────────────────────────────────────────────────────────────
-# REAL HISTORICAL DATA  (Jan 2020 – Dec 2022, 36 months)
-# ─────────────────────────────────────────────────────────────
-# index 0 = January 2020, index 35 = December 2022
-
+# Real historical data (Jan 2020 – Dec 2025, index 0 = Jan 2020)
 COVID_DATA: dict[str, list[float]] = {
     # BLS CPI-U, year-over-year %
     "cpi": [
@@ -89,17 +82,12 @@ _N_REAL = len(COVID_DATA["cpi"])   # 72 — used to clamp t_idx lookups
 assert all(len(v) == _N_REAL for v in COVID_DATA.values()), \
     "COVID_DATA arrays must all have the same length"
 
-# ─────────────────────────────────────────────────────────────
-# INITIAL CONDITIONS  (Jan 2020)
-# ─────────────────────────────────────────────────────────────
-
+# Initial conditions (Jan 2020)
 INIT_PI   = 2.3    # CPI YoY %
 INIT_U    = 3.6    # unemployment %
 INIT_RATE = 1.75   # EFFR %
 
-# ─────────────────────────────────────────────────────────────
-# TWO-PHASE COVID SHOCK SCHEDULE  (counterfactual mode)
-# ─────────────────────────────────────────────────────────────
+# Two-phase COVID shock schedule (counterfactual mode)
 # Phase 1 — Lockdown (Apr–Jul 2020): unemployment spike, mild deflation
 # Phase 2 — Supply chain (Mar 2021–Oct 2022): persistent inflation surge
 
@@ -113,10 +101,6 @@ _PHASE2_END     = 34
 _PHASE2_U_PUSH  =  0.2   # modest unemployment pressure
 _PHASE2_PI_PUSH =  2.0   # strong inflation push
 
-
-# ─────────────────────────────────────────────────────────────
-# ENVIRONMENT
-# ─────────────────────────────────────────────────────────────
 
 class CovidEnv(gym.Env):
     """
@@ -136,7 +120,6 @@ class CovidEnv(gym.Env):
         self.llm_dim = llm_dim
         self.sim     = MacroSimulator()
 
-        # Action space — identical to FedEnvBase
         self.action_mapping = {
             0: -0.75, 1: -0.50, 2: -0.25,
             3:  0.00,
@@ -144,7 +127,6 @@ class CovidEnv(gym.Env):
         }
         self.action_space = spaces.Discrete(len(self.action_mapping))
 
-        # Observation space — identical to FedEnvBase (drop-in compatible)
         self.observation_space = spaces.Dict({
             "macro": spaces.Box(
                 low=np.array([-10.0, 0.0, 0.0], dtype=np.float32),
@@ -165,8 +147,6 @@ class CovidEnv(gym.Env):
         self.max_steps    = 120
         self.current_rate = INIT_RATE
 
-    # ── gym interface ─────────────────────────────────────────────────────────
-
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.t            = 0
@@ -174,7 +154,6 @@ class CovidEnv(gym.Env):
 
         if self.mode == "counterfactual":
             self.sim.np_random = self.np_random
-            # Override MacroSimulator's random reset with Jan 2020 conditions
             self.sim.pi   = INIT_PI
             self.sim.u    = INIT_U
             self.sim.pi_e = INIT_PI
@@ -189,8 +168,6 @@ class CovidEnv(gym.Env):
         if self.mode == "replay":
             return self._step_replay(delta_rate)
         return self._step_counterfactual(delta_rate)
-
-    # ── internal step helpers ─────────────────────────────────────────────────
 
     def _step_replay(self, delta_rate: float):
         """Return the next real data row. Agent action affects rate tracking
@@ -258,14 +235,7 @@ class CovidEnv(gym.Env):
         pi_push: float,
         apply_rate_floor: bool = True,
     ):
-        """
-        One MacroSimulator step with explicit phase-specific shock pushes.
-        Replicates MacroSimulator.step() using the sim's own internal state
-        so no changes to fed_env.py are required.
-
-        Base stochastic noise ε ~ N(0, 0.1) is added on top of the push
-        values, identical to the existing simulator.
-        """
+        """One MacroSimulator step with explicit phase-specific shock pushes."""
         sim = self.sim
         real_rate = nominal_rate - sim.pi_e
         rate_gap  = real_rate - sim.r_star
@@ -292,10 +262,7 @@ class CovidEnv(gym.Env):
         # Adaptive inflation expectations
         sim.pi_e = 0.5 * sim.pi_e + 0.5 * sim.pi
 
-    # ── reward ────────────────────────────────────────────────────────────────
-
     def _compute_reward(self, pi: float, u: float, delta_rate: float) -> float:
-        """Identical reward function to FedEnvBase."""
         pi_loss          = (pi - self.sim.pi_star) ** 2
         u_loss           = (u  - self.sim.u_star)  ** 2
         u_fear_penalty   = 5.0 * (u - 6.0) ** 2 if u > 6.0 else 0.0
@@ -311,14 +278,12 @@ class CovidEnv(gym.Env):
         reward = -(pi_loss + u_loss + u_fear_penalty + rate_vol_loss) + soft_landing_bonus
         return max(reward, _REWARD_CLIP)
 
-    # ── observation ───────────────────────────────────────────────────────────
-
     def _get_obs(self):
         t_idx = min(self.t, _N_REAL - 1)
         if self.mode == "replay":
             pi   = COVID_DATA["cpi"][t_idx]
             u    = COVID_DATA["unemployment"][t_idx]
-            rate = COVID_DATA["effr"][t_idx]       # real historical rate
+            rate = COVID_DATA["effr"][t_idx]
         else:
             pi   = self.sim.pi
             u    = self.sim.u
@@ -328,8 +293,6 @@ class CovidEnv(gym.Env):
             "macro":      np.array([pi, u, rate], dtype=np.float32),
             "llm_belief": np.zeros(self.llm_dim, dtype=np.float32),
         }
-
-    # ── helpers ───────────────────────────────────────────────────────────────
 
     def _get_phase(self) -> int | None:
         """Return the active COVID phase (1, 2) or None for inter-shock months."""
@@ -345,10 +308,6 @@ class CovidEnv(gym.Env):
         return COVID_DATA
 
 
-# ─────────────────────────────────────────────────────────────
-# TAYLOR RULE HELPER
-# ─────────────────────────────────────────────────────────────
-
 def _taylor_action(obs: dict, action_mapping: dict) -> int:
     """Standard Taylor Rule (same implementation as benchmark.py)."""
     pi, u, current_rate = obs["macro"]
@@ -363,10 +322,6 @@ def _taylor_action(obs: dict, action_mapping: dict) -> int:
     return best_action
 
 
-# ─────────────────────────────────────────────────────────────
-# COVID EVALUATION HELPER
-# ─────────────────────────────────────────────────────────────
-
 def covid_eval(
     model=None,
     env_factory=None,
@@ -374,7 +329,7 @@ def covid_eval(
     n_runs: int = 1,
     policy: str = "mlp",
     seed: int = 0,
-) -> dict:  # n_runs=1 is sufficient; counterfactual noise (sigma=0.1) is negligible vs shock magnitudes
+) -> dict:
     """
     Evaluate a policy on the COVID-era environment.
 

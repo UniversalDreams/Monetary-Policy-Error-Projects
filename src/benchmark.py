@@ -5,16 +5,6 @@ Loads saved PPO models from disk and evaluates on fixed seeds:
   - taylor_rule : classical rule-based policy (no training required)
   - baseline    : PPO trained without LLM belief state
   - llm         : PPO trained with state-keyed LLM belief DB
-
-Usage (run directory — auto-discovers models):
-    .venv/Scripts/python src/benchmark.py --run runs/20260301_143022_lstm
-
-Usage (manual model paths):
-    .venv/Scripts/python src/benchmark.py \\
-        --base-model    runs/paper_run/baseline/model \\
-        --offline-model runs/paper_run/llm/model \\
-        --db            data/state_belief_db.json \\
-        --out           runs/paper_run
 """
 
 import argparse

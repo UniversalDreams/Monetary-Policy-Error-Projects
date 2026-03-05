@@ -4,19 +4,6 @@ src/build_state_db.py — Build a state-keyed offline belief-state DB.
 Keys each unique (pi, u, rate) macro state to a 5-dim LLM belief vector,
 enabling StateKeyedLLMWrapper to look up beliefs for any episode trajectory
 without live inference at training time.
-
-Uses a static grid over the reachable state space — DirectLLMAdvisor.get_belief_state
-is a pure function of (pi, u, rate) with no path dependence, so episode simulation
-is unnecessary. Grid search gives guaranteed coverage and eliminates cache misses.
-
-Usage:
-    .venv/Scripts/python src/build_state_db.py
-    .venv/Scripts/python src/build_state_db.py --out data/state_belief_db_smoke.json
-    .venv/Scripts/python src/build_state_db.py --resume
-    .venv/Scripts/python src/build_state_db.py --pi-min 1.5 --pi-max 2.5 --pi-step 0.5 \\
-        --u-min 3.5 --u-max 4.5 --u-step 0.5 \\
-        --rate-min 3.75 --rate-max 4.25 --rate-step 0.25 \\
-        --out data/smoke_grid.json
 """
 
 import argparse
@@ -192,7 +179,7 @@ def main():
 
     for i, key in enumerate(new_keys):
         pi, u, rate = parse_key(key)
-        advisor.reset_episode()   # clears actor history for hierarchical; no-op for direct
+        advisor.reset_episode()
         t_key = time.time()
         try:
             _, belief = advisor.get_belief_state(pi, u, rate, "unknown")

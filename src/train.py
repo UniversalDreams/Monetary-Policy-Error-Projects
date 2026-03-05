@@ -24,11 +24,8 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import DummyVecEnv
 
-try:
-    from sb3_contrib import RecurrentPPO
-    _HAS_SB3_CONTRIB = True
-except ImportError:
-    _HAS_SB3_CONTRIB = False
+from sb3_contrib import RecurrentPPO
+
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -367,11 +364,8 @@ def _tb_log(out: str, name: str):
         return None
 
 
-def make_ppo(env, seed: int, out: str, name: str, policy: str = "mlp",
-             condition: str = "baseline"):
+def make_ppo(env, seed: int, out: str, name: str, policy: str = "mlp", condition: str = "baseline"):
     if policy == "lstm":
-        if not _HAS_SB3_CONTRIB:
-            raise ImportError("sb3_contrib is required for LSTM policy. pip install sb3-contrib")
         cond_key = condition.upper()
         lr_start    = getattr(config, f"{cond_key}_LR")
         lr_end      = getattr(config, f"{cond_key}_LR_END")
@@ -389,7 +383,7 @@ def make_ppo(env, seed: int, out: str, name: str, policy: str = "mlp",
             batch_size=config.LSTM_BATCH_SIZE,
             n_epochs=config.LSTM_N_EPOCHS,
             gamma=config.GAMMA,
-            ent_coef=ent_coef,   # float — annealed by EntropyAnnealCallback
+            ent_coef=ent_coef,
             clip_range=clip_range,
             verbose=0,
             seed=seed,
@@ -445,7 +439,6 @@ def main():
     if os.path.exists(meta_path):
         with open(meta_path) as f:
             meta = json.load(f)
-        # Backfill oracle key for runs created before this feature
         if "oracle" not in meta["conditions"]:
             meta["conditions"]["oracle"] = _pending_condition("oracle")
         os.makedirs(os.path.join(run_dir, "oracle", "checkpoints"), exist_ok=True)

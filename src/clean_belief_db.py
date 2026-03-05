@@ -3,11 +3,6 @@ src/clean_belief_db.py — Normalize P_normal + P_supply to sum to 1.0 in-place.
 
 The LLM occasionally violates the simplex constraint, producing P_n + P_s != 1.0.
 This script rescales the two regime probabilities for every entry in the DB.
-
-Usage:
-    .venv/Scripts/python src/clean_belief_db.py --db data/state_belief_db_hierarchical.json
-    .venv/Scripts/python src/clean_belief_db.py --db data/state_belief_db_hierarchical.json --out data/state_belief_db_clean.json
-    .venv/Scripts/python src/clean_belief_db.py --db data/state_belief_db_hierarchical.json --dry-run
 """
 
 import argparse

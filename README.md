@@ -3,6 +3,7 @@
 Reinforcement learning for Federal Reserve interest rate policy. An RL agent learns to set rates in a simulated macro economy, augmented by an LLM belief state that signals supply shocks and economic regime.
 
 ## [View Results](results/README.md)
+Training curves, benchmark comparisons, trajectory plots, and COVID-era evaluation across all policy conditions.
 
 ---
 

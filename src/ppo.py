@@ -4,6 +4,15 @@ import torch.optim as optim
 import numpy as np
 import config
 
+def flatten_obs(obs_dict, device):
+    """
+    Crush the dictionary from DummyVecEnv into a single flat tensor
+    """
+    macro = torch.Tensor(obs_dict["macro"]).to(device)
+    llm = torch.Tensor(obs_dict["llm_belief"]).to(device)
+    return torch.cat([macro, llm], dim=-1)
+
+
 class RolloutBuffer:
     """
     Stores data from the env interactions to be used in the PPO update
@@ -83,18 +92,12 @@ class RolloutBuffer:
             end_idx = start_idx + batch_size
             current_batch_indices = shuffled_indices[start_idx:end_idx]
 
-            batch_obs = flat_obs[current_batch_indices]
-            batch_actions = flat_actions[current_batch_indices]
-            batch_logprobs = flat_logprobs[current_batch_indices]
-            batch_advantages = flat_advantages[current_batch_indices]
-            batch_returns = flat_returns[current_batch_indices]
-
             yield (
-                batch_obs,
-                batch_actions,
-                batch_logprobs,
-                batch_advantages,
-                batch_returns
+                flat_obs[current_batch_indices],
+                flat_actions[current_batch_indices],
+                flat_logprobs[current_batch_indices],
+                flat_advantages[current_batch_indices],
+                flat_returns[current_batch_indices]
             )
 
 class PPOAgent:
@@ -118,9 +121,12 @@ class PPOAgent:
         # init optimizer
         self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=self.lr, eps=1e-5)
 
-        # buffer
-        obs_shape = envs.single_observation_space.shape
-        action_shape = envs.single_action_space.shape
+        # buffer setup - manually calculate total dims for the dict space
+        macro_dim = envs.observation_space["macro"].shape[0]
+        llm_dim = envs.observation_space["llm_belief"].shape[0]
+        obs_shape = (macro_dim + llm_dim,)
+        action_shape = envs.action_space.shape
+
         self.buffer = RolloutBuffer(self.num_steps, config.N_ENVS, obs_shape, action_shape, device)
 
     def learn(self, total_timesteps):
@@ -130,8 +136,9 @@ class PPOAgent:
         # track total steps
         global_step = 0
 
-        # get init obs from vectorized envs
-        next_obs = torch.Tensor(self.envs.reset()).to(self.device)
+        # get init obs from vectorized envs and flatten it
+        raw_obs = self.envs.reset()
+        next_obs = flatten_obs(raw_obs, self.device)
 
         # init done flags for envs
         next_done = torch.zeros(config.N_ENVS).to(self.device)
@@ -145,10 +152,10 @@ class PPOAgent:
                 global_step += config.N_ENVS
 
                 with torch.no_grad():
-                    action, logprob, _, value = self.actor_critic.get_action_and_value(next_obs)
+                    action, logprob, value = self.actor_critic.get_action_and_value(next_obs)
 
                 # step in vectorized environment
-                obs, rewards, dones, infos = self.envs.step(action.cpu().numpy())
+                raw_new_obs, rewards, dones, infos = self.envs.step(action.cpu().numpy())
 
                 # convert results to tensors
                 rewards_tensor = torch.Tensor(rewards).to(self.device)
@@ -158,13 +165,13 @@ class PPOAgent:
                 self.buffer.add(next_obs, action, logprob, rewards_tensor, value.flatten(), next_done)
 
                 # update state for next step
-                next_obs = torch.Tensor(obs).to(self.device)
+                next_obs = flatten_obs(raw_new_obs, self.device)
                 next_done = dones_tensor
 
             # advantage estimation
             with torch.no_grad():
                 # bootstrap the next value of the final obs for the GAE calculation
-                _, _, _, next_value = self.actor_critic.get_action_and_value(next_obs)
+                _, _, next_value = self.actor_critic.get_action_and_value(next_obs)
 
             self.buffer.compute_returns_and_advantages(next_value.flatten(), next_done, gamma=self.gamma)
 

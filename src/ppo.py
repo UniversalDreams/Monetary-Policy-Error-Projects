@@ -8,9 +8,9 @@ def flatten_obs(obs_dict, device):
     """
     Crush the dictionary from DummyVecEnv into a single flat tensor
     """
-    macro = torch.Tensor(obs_dict["macro"]).to(device)
     llm = torch.Tensor(obs_dict["llm_belief"]).to(device)
-    return torch.cat([macro, llm], dim=-1)
+    macro = torch.Tensor(obs_dict["macro"]).to(device)
+    return torch.cat([llm, macro], dim=-1)
 
 
 class RolloutBuffer:
@@ -116,7 +116,8 @@ class PPOAgent:
         self.n_epochs = config.N_EPOCHS
         self.gamma = config.GAMMA
         self.clip_range = 0.2
-        self.ent_coef = config.BASELINE_ENT_COEF
+        self.ent_coef_start = config.BASELINE_ENT_COEF
+        self.ent_coef = self.ent_coef_start
 
         # init optimizer
         self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=self.lr, eps=1e-5)
@@ -175,6 +176,10 @@ class PPOAgent:
 
             self.buffer.compute_returns_and_advantages(next_value.flatten(), next_done, gamma=self.gamma)
 
+            # calculate progress and decay entropy coefficient linearly
+            progress = (update - 1) / num_updates
+            self.ent_coef = self.ent_coef_start * (1.0 - progress)
+
             # update
             self._update_policy()
 
@@ -185,14 +190,12 @@ class PPOAgent:
         """
         Runs the PPO epochs and mini-batch updates to optimize the policy
         """
-        # normalize advantages across the entire rollout batch
-        flat_advs = self.buffer.advantages.view(-1)
-        normalized_advs = (flat_advs - flat_advs.mean()) / (flat_advs.std() + 1e-8)
-        self.buffer.advantages = normalized_advs.view(self.buffer.advantages.shape)
-
         for epoch in range(self.n_epochs):
             for batch in self.buffer.get_generator(self.batch_size):
                 b_obs, b_actions, b_old_logprobs, b_advantages, b_returns = batch
+
+                # normalize advantages per mini-batch
+                b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8)
 
                 # evaluate the historical actions on the historical states
                 new_logprobs, entropy, new_values = self.actor_critic.evaluate_actions(b_obs, b_actions)

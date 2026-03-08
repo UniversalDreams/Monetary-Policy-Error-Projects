@@ -1,3 +1,7 @@
+import csv
+import os
+import time
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -130,61 +134,86 @@ class PPOAgent:
 
         self.buffer = RolloutBuffer(self.num_steps, config.N_ENVS, obs_shape, action_shape, device)
 
-    def learn(self, total_timesteps):
+    def learn(self, total_timesteps, csv_log_path=None, tag="mlp"):
         """
-        Main training loop
+        Main training loop.
+
+        Args:
+            total_timesteps: total env steps to train for
+            csv_log_path:    optional path to write per-episode CSV log
+            tag:             label used in console episode prints
         """
-        # track total steps
         global_step = 0
 
-        # get init obs from vectorized envs and flatten it
         raw_obs = self.envs.reset()
         next_obs = flatten_obs(raw_obs, self.device)
-
-        # init done flags for envs
         next_done = torch.zeros(config.N_ENVS).to(self.device)
 
-        # calc total ppo updates to run
         num_updates = total_timesteps // (self.num_steps * config.N_ENVS)
 
-        for update in range(1, num_updates + 1):
-            # rollout
-            for step in range(0, self.num_steps):
-                global_step += config.N_ENVS
+        # Episode tracking
+        ep_rewards = torch.zeros(config.N_ENVS, device=self.device)
+        ep_count = 0
+        start_time = time.time()
 
+        csv_file = None
+        csv_writer = None
+        if csv_log_path:
+            os.makedirs(os.path.dirname(csv_log_path) or ".", exist_ok=True)
+            csv_file = open(csv_log_path, "w", newline="")
+            csv_writer = csv.writer(csv_file)
+            csv_writer.writerow(["episode", "total_steps", "ep_reward", "elapsed_s"])
+
+        try:
+            for update in range(1, num_updates + 1):
+                # rollout
+                for step in range(0, self.num_steps):
+                    global_step += config.N_ENVS
+
+                    with torch.no_grad():
+                        action, logprob, value, _ = self.actor_critic.get_action_and_value(next_obs)
+
+                    raw_new_obs, rewards, dones, infos = self.envs.step(action.cpu().numpy())
+
+                    rewards_tensor = torch.Tensor(rewards).to(self.device)
+                    dones_tensor = torch.Tensor(dones).to(self.device)
+
+                    self.buffer.add(next_obs, action, logprob, rewards_tensor, value.flatten(), next_done)
+
+                    ep_rewards += rewards_tensor
+                    for i, done in enumerate(dones):
+                        if done:
+                            ep_count += 1
+                            elapsed = time.time() - start_time
+                            print(
+                                f"[{tag}] ep {ep_count}  reward={ep_rewards[i]:.2f}"
+                                f"  steps={global_step}  elapsed={elapsed:.0f}s",
+                                flush=True,
+                            )
+                            if csv_writer:
+                                csv_writer.writerow([ep_count, global_step, round(float(ep_rewards[i]), 4), round(elapsed, 1)])
+                                csv_file.flush()
+                            ep_rewards[i] = 0.0
+
+                    next_obs = flatten_obs(raw_new_obs, self.device)
+                    next_done = dones_tensor
+
+                # advantage estimation
                 with torch.no_grad():
-                    action, logprob, value = self.actor_critic.get_action_and_value(next_obs)
+                    _, _, next_value, _ = self.actor_critic.get_action_and_value(next_obs)
 
-                # step in vectorized environment
-                raw_new_obs, rewards, dones, infos = self.envs.step(action.cpu().numpy())
+                self.buffer.compute_returns_and_advantages(next_value.flatten(), next_done, gamma=self.gamma)
 
-                # convert results to tensors
-                rewards_tensor = torch.Tensor(rewards).to(self.device)
-                dones_tensor = torch.Tensor(dones).to(self.device)
+                progress = (update - 1) / num_updates
+                self.ent_coef = self.ent_coef_start * (1.0 - progress)
 
-                # store data in buffer
-                self.buffer.add(next_obs, action, logprob, rewards_tensor, value.flatten(), next_done)
+                self._update_policy()
 
-                # update state for next step
-                next_obs = flatten_obs(raw_new_obs, self.device)
-                next_done = dones_tensor
+                self.buffer.step = 0
 
-            # advantage estimation
-            with torch.no_grad():
-                # bootstrap the next value of the final obs for the GAE calculation
-                _, _, next_value = self.actor_critic.get_action_and_value(next_obs)
-
-            self.buffer.compute_returns_and_advantages(next_value.flatten(), next_done, gamma=self.gamma)
-
-            # calculate progress and decay entropy coefficient linearly
-            progress = (update - 1) / num_updates
-            self.ent_coef = self.ent_coef_start * (1.0 - progress)
-
-            # update
-            self._update_policy()
-
-            # reset buffer
-            self.buffer.step = 0
+        finally:
+            if csv_file:
+                csv_file.close()
 
     def _update_policy(self):
         """

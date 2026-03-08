@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(.venv/Scripts/python:*)",
+      "Bash(sort -k2 -rn)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:sb3-contrib.readthedocs.io)"
+    ]
+  }
+}

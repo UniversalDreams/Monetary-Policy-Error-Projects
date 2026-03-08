@@ -115,7 +115,7 @@ class PPOAgent:
         self.batch_size = config.BATCH_SIZE
         self.n_epochs = config.N_EPOCHS
         self.gamma = config.GAMMA
-        self.clip_range = config.BASELINE_CLIP_RANGE
+        self.clip_range = 0.2
         self.ent_coef = config.BASELINE_ENT_COEF
 
         # init optimizer

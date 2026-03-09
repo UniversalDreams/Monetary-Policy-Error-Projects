@@ -204,13 +204,13 @@ class PPOAgent:
                 for i, done in enumerate(dones):
                     if done:
                         episodes_completed += 1
-                        ep_reward = current_ep_rewards[i]
+                        ep_reward = float(current_ep_rewards[i])
 
                         # calculate episode averages
-                        steps_taken = max(1, current_ep_steps[i])
-                        avg_P_supply = current_ep_P_supply[i] / steps_taken
-                        avg_hawkishness = current_ep_hawkishness[i] / steps_taken
-                        avg_uncertainty = current_ep_uncertainty[i] / steps_taken
+                        steps_taken = max(1, int(current_ep_steps[i]))
+                        avg_P_supply = float(current_ep_P_supply[i]) / steps_taken
+                        avg_hawkishness = float(current_ep_hawkishness[i]) / steps_taken
+                        avg_uncertainty = float(current_ep_uncertainty[i]) / steps_taken
                         elapsed = time.time() - start_time
 
                         # log to csv and terminal

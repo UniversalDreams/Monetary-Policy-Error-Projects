@@ -47,7 +47,7 @@ def main():
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
     print(f"\n{'=' * 60}")
-    print(f"  MANUAL PPO RUN  (Device: {device})")
+    print(f"  PPO RUN  (Device: {device})")
     print(f"  Target Directory: {run_dir}")
     print(f"{'=' * 60}\n")
 

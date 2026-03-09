@@ -190,7 +190,7 @@ class PPOAgent:
                 # step in vectorized environment
                 raw_new_obs, rewards, dones, infos = self.envs.step(action.cpu().numpy())
 
-                # xxtract llm beliefs from the observation dict
+                # extract llm beliefs from the observation dict
                 # Shape: (N_ENVS, 5) -> [P_normal, P_supply, sentiment, hawkishness, uncertainty]
                 llm_beliefs = raw_new_obs.get("llm_belief", np.zeros((config.N_ENVS, 5)))
 

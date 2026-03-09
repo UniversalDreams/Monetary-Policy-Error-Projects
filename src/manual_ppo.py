@@ -57,7 +57,7 @@ def main():
 
     # ── Condition: Baseline (zero belief) ─────────────────────
     if args.condition in ("base", "both"):
-        print(">>> Condition: Baseline (zero LLM belief)")
+        print("Condition: Baseline (zero LLM belief)")
         cond_dir = os.path.join(run_dir, "baseline")
         os.makedirs(cond_dir, exist_ok=True)
 
@@ -74,7 +74,7 @@ def main():
 
         meta["conditions"]["baseline"]["status"] = "completed"
         _save_metadata(run_dir, meta)
-        print(f">>> Baseline weights saved to {model_path}\n")
+        print(f"Baseline weights saved to {model_path}\n")
 
     # ── Condition: LLM insight (state-keyed DB) ───────────────
     if args.condition in ("offline", "both"):

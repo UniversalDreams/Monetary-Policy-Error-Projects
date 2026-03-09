@@ -72,7 +72,7 @@ def main():
         _save_metadata(run_dir, meta)
         print(f"Baseline weights saved to {model_path}\n")
 
-    # Condition: LLM insight (state-keyed DB)
+    # LLM insight (state-keyed DB)
     if args.condition in ("offline", "both"):
         print("Condition: LLM insight (state-keyed belief DB)")
         cond_dir = os.path.join(run_dir, "llm")

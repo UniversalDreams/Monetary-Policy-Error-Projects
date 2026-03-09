@@ -1,3 +1,7 @@
+import csv
+import os
+import time
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -130,10 +134,23 @@ class PPOAgent:
 
         self.buffer = RolloutBuffer(self.num_steps, config.N_ENVS, obs_shape, action_shape, device)
 
-    def learn(self, total_timesteps):
+    def learn(self, total_timesteps, cond_dir=None):
         """
         Main training loop
         """
+        # setup csv logging
+        csv_file = None
+        csv_writer = None
+        if cond_dir:
+            csv_path = os.path.join(cond_dir, "training.csv")
+            csv_file = open(csv_path, "w", newline="")
+            csv_writer = csv.writer(csv_file)
+            csv_writer.writerow([
+                "episode", "total_steps", "ep_reward",
+                "avg_P_supply", "avg_hawkishness", "avg_uncertainty",
+                "ent_coef", "elapsed_s"
+            ])
+
         # track total steps
         global_step = 0
 
@@ -147,6 +164,21 @@ class PPOAgent:
         # calc total ppo updates to run
         num_updates = total_timesteps // (self.num_steps * config.N_ENVS)
 
+        # tracking for logs
+        episodes_completed = 0
+        start_time = time.time()
+        best_ep_reward = -np.inf
+        best_ema = -np.inf
+        current_ema = None
+        alpha = 2.0 / (100 + 1)
+
+        # accumulators for the 4 parallel environments
+        current_ep_rewards = np.zeros(config.N_ENVS)
+        current_ep_steps = np.zeros(config.N_ENVS)
+        current_ep_P_supply = np.zeros(config.N_ENVS)
+        current_ep_hawkishness = np.zeros(config.N_ENVS)
+        current_ep_uncertainty = np.zeros(config.N_ENVS)
+
         for update in range(1, num_updates + 1):
             # rollout
             for step in range(0, self.num_steps):
@@ -157,6 +189,66 @@ class PPOAgent:
 
                 # step in vectorized environment
                 raw_new_obs, rewards, dones, infos = self.envs.step(action.cpu().numpy())
+
+                # xxtract llm beliefs from the observation dict
+                # Shape: (N_ENVS, 5) -> [P_normal, P_supply, sentiment, hawkishness, uncertainty]
+                llm_beliefs = raw_new_obs.get("llm_belief", np.zeros((config.N_ENVS, 5)))
+
+                # accumulate metrics
+                current_ep_rewards += rewards
+                current_ep_steps += 1
+                current_ep_P_supply += llm_beliefs[:, 1]
+                current_ep_hawkishness += llm_beliefs[:, 3]
+                current_ep_uncertainty += llm_beliefs[:, 4]
+
+                for i, done in enumerate(dones):
+                    if done:
+                        episodes_completed += 1
+                        ep_reward = current_ep_rewards[i]
+
+                        # calculate episode averages
+                        steps_taken = max(1, current_ep_steps[i])
+                        avg_P_supply = current_ep_P_supply[i] / steps_taken
+                        avg_hawkishness = current_ep_hawkishness[i] / steps_taken
+                        avg_uncertainty = current_ep_uncertainty[i] / steps_taken
+                        elapsed = time.time() - start_time
+
+                        # log to csv and terminal
+                        if csv_writer:
+                            csv_writer.writerow([
+                                episodes_completed, global_step, round(ep_reward, 4),
+                                round(avg_P_supply, 4), round(avg_hawkishness, 4),
+                                round(avg_uncertainty, 4), round(self.ent_coef, 6),
+                                round(elapsed, 1)
+                            ])
+                            csv_file.flush()
+
+                        if cond_dir and ep_reward > best_ep_reward:
+                            best_ep_reward = ep_reward
+                            best_path = os.path.join(cond_dir, "best_model_weights.pth")
+                            torch.save(self.actor_critic.state_dict(), best_path)
+
+                        if current_ema is None:
+                            current_ema = ep_reward
+                        else:
+                            current_ema = alpha * ep_reward + (1 - alpha) * current_ema
+
+                        if cond_dir and current_ema > best_ema:
+                            best_ema = current_ema
+                            ema_path = os.path.join(cond_dir, "best_model_ema_weights.pth")
+                            torch.save(self.actor_critic.state_dict(), ema_path)
+
+                        if episodes_completed % 50 == 0:
+                            print(f"Update {update}/{num_updates} | Ep {episodes_completed} | "
+                                  f"Reward: {ep_reward:+.2f} | P_sup: {avg_P_supply:.2f} | "
+                                  f"Unc: {avg_uncertainty:.2f} | Time: {elapsed:.0f}s")
+
+                        # reset trackers for this specific environment
+                        current_ep_rewards[i] = 0.0
+                        current_ep_steps[i] = 0.0
+                        current_ep_P_supply[i] = 0.0
+                        current_ep_hawkishness[i] = 0.0
+                        current_ep_uncertainty[i] = 0.0
 
                 # convert results to tensors
                 rewards_tensor = torch.Tensor(rewards).to(self.device)
@@ -185,6 +277,9 @@ class PPOAgent:
 
             # reset buffer
             self.buffer.step = 0
+
+        if csv_file:
+            csv_file.close()
 
     def _update_policy(self):
         """

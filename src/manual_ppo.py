@@ -1,7 +1,3 @@
-"""
-src/manual_ppo.py — Manual PPO training.
-"""
-
 import argparse
 import os
 import sys
@@ -55,7 +51,7 @@ def main():
     print(f"  Target Directory: {run_dir}")
     print(f"{'=' * 60}\n")
 
-    # ── Condition: Baseline (zero belief) ─────────────────────
+    # Baseline (zero belief)
     if args.condition in ("base", "both"):
         print("Condition: Baseline (zero LLM belief)")
         cond_dir = os.path.join(run_dir, "baseline")
@@ -76,7 +72,7 @@ def main():
         _save_metadata(run_dir, meta)
         print(f"Baseline weights saved to {model_path}\n")
 
-    # ── Condition: LLM insight (state-keyed DB) ───────────────
+    # Condition: LLM insight (state-keyed DB)
     if args.condition in ("offline", "both"):
         print("Condition: LLM insight (state-keyed belief DB)")
         cond_dir = os.path.join(run_dir, "llm")

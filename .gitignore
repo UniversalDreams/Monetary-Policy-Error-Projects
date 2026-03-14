@@ -8,6 +8,7 @@
 
 data/
 runs/
+runs_custom/
 PROJECT_STATUS.md
 __pycache__/
 *.pyc

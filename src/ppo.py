@@ -1,6 +1,4 @@
-import csv
 import os
-import time
 
 import torch
 import torch.nn as nn
@@ -90,6 +88,7 @@ class RolloutBuffer:
         flat_logprobs = self.logprobs.view(-1)
         flat_advantages = self.advantages.view(-1)
         flat_returns = self.returns.view(-1)
+        flat_values = self.values.view(-1)
 
         # iterate through the shuffled indices
         for start_idx in range(0, total_experiences, batch_size):
@@ -101,30 +100,38 @@ class RolloutBuffer:
                 flat_actions[current_batch_indices],
                 flat_logprobs[current_batch_indices],
                 flat_advantages[current_batch_indices],
-                flat_returns[current_batch_indices]
+                flat_returns[current_batch_indices],
+                flat_values[current_batch_indices],
             )
 
 class PPOAgent:
     """
     Main PPO Algo loop
     """
-    def __init__(self, envs, actor_critic, device):
+    def __init__(self, envs, actor_critic, device,
+                 lr_start=config.LR, lr_end=config.LR, lr_decay_start=1.0,
+                 clip_range=config.BASELINE_CLIP_RANGE,
+                 ent_coef_start=config.BASELINE_ENT_COEF,
+                 ent_coef_end=0.0):
         self.envs = envs
         self.actor_critic = actor_critic
         self.device = device
 
         # hyperparameters from config.py
-        self.lr = config.LR
+        self.lr_start = lr_start
+        self.lr_end = lr_end
+        self.lr_decay_start = lr_decay_start
         self.num_steps = config.N_STEPS
         self.batch_size = config.BATCH_SIZE
         self.n_epochs = config.N_EPOCHS
         self.gamma = config.GAMMA
-        self.clip_range = 0.2
-        self.ent_coef_start = config.BASELINE_ENT_COEF
-        self.ent_coef = self.ent_coef_start
+        self.clip_range     = clip_range
+        self.ent_coef_start = ent_coef_start
+        self.ent_coef_end   = ent_coef_end
+        self.ent_coef       = ent_coef_start
 
         # init optimizer
-        self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=self.lr, eps=1e-5)
+        self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=self.lr_start, eps=1e-5)
 
         # buffer setup - manually calculate total dims for the dict space
         macro_dim = envs.observation_space["macro"].shape[0]
@@ -134,16 +141,18 @@ class PPOAgent:
 
         self.buffer = RolloutBuffer(self.num_steps, config.N_ENVS, obs_shape, action_shape, device)
 
-    def learn(self, total_timesteps, csv_log_path=None, tag="mlp"):
+    def learn(self, total_timesteps, on_episode=None, on_checkpoint=None, on_update=None):
         """
         Main training loop.
 
         Args:
             total_timesteps: total env steps to train for
-            csv_log_path:    optional path to write per-episode CSV log
-            tag:             label used in console episode prints
+            on_episode:      optional callable(ep_reward, global_step, ent_coef, llm_belief_arr)
+            on_checkpoint:   optional callable(actor_critic, global_step)
+            on_update:       optional callable(losses_dict, global_step)
         """
         global_step = 0
+        _last_ckpt = 0
 
         raw_obs = self.envs.reset()
         next_obs = flatten_obs(raw_obs, self.device)
@@ -152,78 +161,86 @@ class PPOAgent:
         num_updates = total_timesteps // (self.num_steps * config.N_ENVS)
 
         # Episode tracking
-        ep_rewards = torch.zeros(config.N_ENVS, device=self.device)
-        ep_count = 0
-        start_time = time.time()
+        ep_rewards      = torch.zeros(config.N_ENVS, device=self.device)
+        ep_norm_rewards = torch.zeros(config.N_ENVS, device=self.device)
+        ep_llm_accs = [[] for _ in range(config.N_ENVS)]
 
-        csv_file = None
-        csv_writer = None
-        if csv_log_path:
-            os.makedirs(os.path.dirname(csv_log_path) or ".", exist_ok=True)
-            csv_file = open(csv_log_path, "w", newline="")
-            csv_writer = csv.writer(csv_file)
-            csv_writer.writerow(["episode", "total_steps", "ep_reward", "elapsed_s"])
+        for update in range(1, num_updates + 1):
+            # rollout
+            for step in range(0, self.num_steps):
+                global_step += config.N_ENVS
 
-        try:
-            for update in range(1, num_updates + 1):
-                # rollout
-                for step in range(0, self.num_steps):
-                    global_step += config.N_ENVS
-
-                    with torch.no_grad():
-                        action, logprob, value, _ = self.actor_critic.get_action_and_value(next_obs)
-
-                    raw_new_obs, rewards, dones, infos = self.envs.step(action.cpu().numpy())
-
-                    rewards_tensor = torch.Tensor(rewards).to(self.device)
-                    dones_tensor = torch.Tensor(dones).to(self.device)
-
-                    self.buffer.add(next_obs, action, logprob, rewards_tensor, value.flatten(), next_done)
-
-                    ep_rewards += rewards_tensor
-                    for i, done in enumerate(dones):
-                        if done:
-                            ep_count += 1
-                            elapsed = time.time() - start_time
-                            print(
-                                f"[{tag}] ep {ep_count}  reward={ep_rewards[i]:.2f}"
-                                f"  steps={global_step}  elapsed={elapsed:.0f}s",
-                                flush=True,
-                            )
-                            if csv_writer:
-                                csv_writer.writerow([ep_count, global_step, round(float(ep_rewards[i]), 4), round(elapsed, 1)])
-                                csv_file.flush()
-                            ep_rewards[i] = 0.0
-
-                    next_obs = flatten_obs(raw_new_obs, self.device)
-                    next_done = dones_tensor
-
-                # advantage estimation
                 with torch.no_grad():
-                    _, _, next_value, _ = self.actor_critic.get_action_and_value(next_obs)
+                    action, logprob, value, _ = self.actor_critic.get_action_and_value(next_obs)
 
-                self.buffer.compute_returns_and_advantages(next_value.flatten(), next_done, gamma=self.gamma)
+                raw_new_obs, rewards, dones, infos = self.envs.step(action.cpu().numpy())
 
-                progress = (update - 1) / num_updates
-                self.ent_coef = self.ent_coef_start * (1.0 - progress)
+                rewards_tensor = torch.Tensor(rewards).to(self.device)
+                dones_tensor = torch.Tensor(dones).to(self.device)
 
-                self._update_policy()
+                self.buffer.add(next_obs, action, logprob, rewards_tensor, value.flatten(), next_done)
 
-                self.buffer.step = 0
+                _old_r = getattr(self.envs, "old_reward", None)
+                raw_rewards = _old_r if _old_r is not None else rewards
+                ep_rewards      += torch.tensor(raw_rewards, dtype=torch.float32, device=self.device)
+                ep_norm_rewards += rewards_tensor
+                for i in range(config.N_ENVS):
+                    ep_llm_accs[i].append(raw_new_obs["llm_belief"][i])
 
-        finally:
-            if csv_file:
-                csv_file.close()
+                for i, done in enumerate(dones):
+                    if done:
+                        llm_arr = np.array(ep_llm_accs[i]) if ep_llm_accs[i] else None
+                        if on_episode:
+                            on_episode(float(ep_rewards[i]), float(ep_norm_rewards[i]), global_step, self.ent_coef, llm_arr)
+                        ep_rewards[i] = 0.0
+                        ep_norm_rewards[i] = 0.0
+                        ep_llm_accs[i] = []
+
+                next_obs = flatten_obs(raw_new_obs, self.device)
+                next_done = dones_tensor
+
+            # advantage estimation
+            with torch.no_grad():
+                _, _, next_value, _ = self.actor_critic.get_action_and_value(next_obs)
+
+            self.buffer.compute_returns_and_advantages(next_value.flatten(), next_done, gamma=self.gamma)
+
+            progress = (update - 1) / num_updates
+            self.ent_coef = self.ent_coef_end + (self.ent_coef_start - self.ent_coef_end) * (1.0 - progress)
+            self._update_lr(progress)
+
+            losses = self._update_policy()
+            if on_update is not None:
+                on_update(losses, global_step)
+
+            self.buffer.step = 0
+
+            if on_checkpoint and global_step - _last_ckpt >= config.CHECKPOINT_FREQ:
+                on_checkpoint(self.actor_critic, global_step)
+                _last_ckpt = global_step
+
+    def _update_lr(self, progress):
+        flat_end = 1.0 - self.lr_decay_start
+        if progress < flat_end:
+            lr = self.lr_start
+        else:
+            remaining = 1.0 - progress
+            lr = self.lr_end + (self.lr_start - self.lr_end) * (remaining / self.lr_decay_start)
+        for pg in self.optimizer.param_groups:
+            pg["lr"] = lr
 
     def _update_policy(self):
         """
-        Runs the PPO epochs and mini-batch updates to optimize the policy
+        Runs the PPO epochs and mini-batch updates to optimize the policy.
+        Returns a dict with mean policy_loss, value_loss, entropy_loss across all updates.
         """
+        policy_loss_vals, value_loss_vals, entropy_loss_vals = [], [], []
+
         for epoch in range(self.n_epochs):
             for batch in self.buffer.get_generator(self.batch_size):
-                b_obs, b_actions, b_old_logprobs, b_advantages, b_returns = batch
+                b_obs, b_actions, b_old_logprobs, b_advantages, b_returns, b_old_values = batch
 
-                # normalize advantages per mini-batch
+                # Normalize per mini-batch (matches SB3 default)
                 b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8)
 
                 # evaluate the historical actions on the historical states
@@ -238,8 +255,9 @@ class PPOAgent:
                 surrogate_2 = torch.clamp(ratio, 1.0 - self.clip_range, 1.0 + self.clip_range) * b_advantages
                 policy_loss = -torch.min(surrogate_1, surrogate_2).mean()
 
-                # value loss
-                value_loss = nn.MSELoss()(new_values.squeeze(-1), b_returns)
+                # plain MSE value loss (matches SB3 default, no clipping)
+                new_values = new_values.squeeze(-1)
+                value_loss = ((new_values - b_returns) ** 2).mean()
 
                 # entropy loss for exploration
                 entropy_loss = -entropy.mean()
@@ -255,3 +273,13 @@ class PPOAgent:
                 nn.utils.clip_grad_norm_(self.actor_critic.parameters(), max_norm=0.5)
 
                 self.optimizer.step()
+
+                policy_loss_vals.append(policy_loss.item())
+                value_loss_vals.append(value_loss.item())
+                entropy_loss_vals.append(entropy_loss.item())
+
+        return {
+            "policy_loss":  float(np.mean(policy_loss_vals)),
+            "value_loss":   float(np.mean(value_loss_vals)),
+            "entropy_loss": float(np.mean(entropy_loss_vals)),
+        }

@@ -67,8 +67,15 @@ class LSTMActorCritic(nn.Module):
     def __init__(self, obs_dim, act_dim, lstm_hidden_size=64, n_lstm_layers=1):
         super().__init__()
 
-        # Shared feature extractor
-        self.features = nn.Sequential(
+        # Separate feature extractors for actor and critic (prevents value loss
+        # from corrupting actor features via a shared encoder)
+        self.features_pi = nn.Sequential(
+            layer_init(nn.Linear(obs_dim, 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 64)),
+            nn.Tanh(),
+        )
+        self.features_vf = nn.Sequential(
             layer_init(nn.Linear(obs_dim, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
@@ -146,13 +153,14 @@ class LSTMActorCritic(nn.Module):
         if episode_starts is None:
             episode_starts = torch.zeros(n_envs, device=obs.device)
 
-        feat = self.features(obs)
+        feat_pi = self.features_pi(obs)
+        feat_vf = self.features_vf(obs)
 
         latent_pi, (h_pi_new, c_pi_new) = self._process_sequence(
-            feat, h_pi, c_pi, episode_starts, self.lstm_actor
+            feat_pi, h_pi, c_pi, episode_starts, self.lstm_actor
         )
         latent_vf, (h_vf_new, c_vf_new) = self._process_sequence(
-            feat, h_vf, c_vf, episode_starts, self.lstm_critic
+            feat_vf, h_vf, c_vf, episode_starts, self.lstm_critic
         )
 
         logits = self.actor_head(latent_pi)
@@ -162,6 +170,35 @@ class LSTMActorCritic(nn.Module):
 
         new_hidden = (h_pi_new, c_pi_new, h_vf_new, c_vf_new)
         return action, probs.log_prob(action), value, new_hidden
+
+    def actor_parameters(self):
+        return (list(self.features_pi.parameters()) +
+                list(self.lstm_actor.parameters()) +
+                list(self.actor_head.parameters()))
+
+    def critic_parameters(self):
+        return (list(self.features_vf.parameters()) +
+                list(self.lstm_critic.parameters()) +
+                list(self.critic_head.parameters()))
+
+    def evaluate_actor(self, obs, action, hidden=None, episode_starts=None):
+        n_seq = hidden[0].shape[1]
+        h_pi, c_pi = hidden[0], hidden[1]
+        if episode_starts is None:
+            episode_starts = torch.zeros(obs.shape[0], device=obs.device)
+        feat_pi = self.features_pi(obs)
+        latent_pi, _ = self._process_sequence(feat_pi, h_pi, c_pi, episode_starts, self.lstm_actor)
+        logits = self.actor_head(latent_pi)
+        probs = Categorical(logits=logits)
+        return probs.log_prob(action), probs.entropy()
+
+    def evaluate_critic(self, obs, hidden=None, episode_starts=None):
+        h_vf, c_vf = hidden[2], hidden[3]
+        if episode_starts is None:
+            episode_starts = torch.zeros(obs.shape[0], device=obs.device)
+        feat_vf = self.features_vf(obs)
+        latent_vf, _ = self._process_sequence(feat_vf, h_vf, c_vf, episode_starts, self.lstm_critic)
+        return self.critic_head(latent_vf)
 
     def evaluate_actions(self, obs, action, hidden=None, episode_starts=None):
         """
@@ -180,10 +217,11 @@ class LSTMActorCritic(nn.Module):
         if episode_starts is None:
             episode_starts = torch.zeros(obs.shape[0], device=obs.device)
 
-        feat = self.features(obs)
+        feat_pi = self.features_pi(obs)
+        feat_vf = self.features_vf(obs)
 
-        latent_pi, _ = self._process_sequence(feat, h_pi, c_pi, episode_starts, self.lstm_actor)
-        latent_vf, _ = self._process_sequence(feat, h_vf, c_vf, episode_starts, self.lstm_critic)
+        latent_pi, _ = self._process_sequence(feat_pi, h_pi, c_pi, episode_starts, self.lstm_actor)
+        latent_vf, _ = self._process_sequence(feat_vf, h_vf, c_vf, episode_starts, self.lstm_critic)
 
         logits = self.actor_head(latent_pi)
         probs  = Categorical(logits=logits)

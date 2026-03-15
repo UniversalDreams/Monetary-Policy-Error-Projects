@@ -3,7 +3,7 @@
 set -e
 
 echo "==================================================="
-echo "🚀 STARTING DRQN (CUSTOM RECURRENT) FULL RUN"
+echo "STARTING DRQN FULL RUN"
 echo "==================================================="
 python src/train_custom.py \
     --policy drqn \
@@ -12,7 +12,7 @@ python src/train_custom.py \
     --run-name drqn_final_run
 
 echo "==================================================="
-echo "🚀 STARTING MLP (STANDARD PPO) FULL RUN"
+echo "STARTING MLP FULL RUN"
 echo "==================================================="
 python src/train_custom.py \
     --policy mlp \
@@ -21,7 +21,7 @@ python src/train_custom.py \
     --run-name mlp_final_run
 
 echo "==================================================="
-echo "🚀 STARTING LSTM (RECURRENT PPO) FULL RUN"
+echo "STARTING LSTM FULL RUN"
 echo "==================================================="
 python src/train_custom.py \
     --policy lstm \
@@ -30,5 +30,5 @@ python src/train_custom.py \
     --run-name lstm_final_run
 
 echo "==================================================="
-echo "✅ ALL TRAINING COMPLETE! YOU CAN WAKE UP NOW."
+echo "ALL TRAINING COMPLETE!"
 echo "==================================================="

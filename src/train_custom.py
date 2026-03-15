@@ -505,9 +505,16 @@ def main():
 
     device = torch.device(
         "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
-    run_id  = args.run_name or (datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{args.policy}")
+    run_id = args.run_name or (datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{args.policy}")
     run_dir = os.path.join(args.out, run_id)
-    meta    = _init_run(run_dir, args)
+
+    meta_path = os.path.join(run_dir, "metadata.json")
+    if os.path.exists(meta_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        print(f"Resuming existing run. Loaded metadata from {meta_path}")
+    else:
+        meta = _init_run(run_dir, args)
 
     total_timesteps = args.base_episodes * config.MAX_STEPS
 

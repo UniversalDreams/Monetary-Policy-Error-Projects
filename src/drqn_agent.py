@@ -122,6 +122,10 @@ class DRQNAgent:
 
     def learn(self, total_timesteps, on_episode=None, on_checkpoint=None, on_update=None):
         """Main training loop."""
+        num_iterations = total_timesteps // self.n_envs
+
+        self.epsilon_decay_steps = int(num_iterations * 0.25)
+
         raw_obs = self.envs.reset()
         obs = flatten_obs(raw_obs, self.device)
 
@@ -133,7 +137,9 @@ class DRQNAgent:
         # track raw rewards
         ep_raw_reward_sums = np.zeros(self.n_envs)
 
-        for step in range(total_timesteps):
+        for step in range(num_iterations): # <-- Use num_iterations here!
+            global_step = step * self.n_envs # <-- Calculate true global steps for logging
+
             # act
             actions, next_hidden_state = self.select_action(obs, hidden_state)
 
@@ -163,8 +169,8 @@ class DRQNAgent:
                     if on_episode:
                         llm_belief = raw_new_obs["llm_belief"][i:i+1] # Shape (1, 5)
                         ep_norm_rew = sum(ep_rews[i])
-                        # We pass epsilon instead of entropy coefficient for DRQN
-                        on_episode(ep_raw_reward_sums[i], ep_norm_rew, step, self.epsilon, llm_belief)
+                        # Pass true global_step to align your CSVs!
+                        on_episode(ep_raw_reward_sums[i], ep_norm_rew, global_step, self.epsilon, llm_belief)
 
                     # reset trackers for this env
                     ep_obs[i], ep_acts[i], ep_rews[i], ep_dones[i] = [], [], [], []
@@ -186,7 +192,7 @@ class DRQNAgent:
             if step % self.update_freq == 0:
                 losses = self.update()
                 if on_update and losses is not None:
-                    on_update(losses, step)
+                    on_update(losses, global_step)
 
             if on_checkpoint and step % (config.CHECKPOINT_FREQ // self.n_envs) == 0:
-                on_checkpoint(self.policy_net, step)
+                on_checkpoint(self.policy_net, global_step)

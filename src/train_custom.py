@@ -33,6 +33,7 @@ from fed_env import FedEnvBase, StateKeyedLLMWrapper, MockLLMObservationWrapper
 from network import ActorCritic, LSTMActorCritic
 from ppo import PPOAgent
 from ppo_recurrent import RecurrentPPOAgent
+from drqn_agent import DRQNAgent
 
 
 # ─────────────────────────────────────────────────────────────
@@ -174,7 +175,10 @@ def _make_agent(policy: str, envs, device: str,
     obs_dim   = macro_dim + llm_dim
     act_dim   = envs.action_space.n
 
-    if policy == "lstm":
+    if policy == "drqn":
+        agent = DRQNAgent(envs, device)
+        return agent, agent.policy_net
+    elif policy == "lstm":
         ac = LSTMActorCritic(obs_dim, act_dim, lstm_hidden_size=config.LSTM_HIDDEN_SIZE, n_lstm_layers=1).to(device)
         return RecurrentPPOAgent(envs, ac, device, lr_start, lr_end, lr_decay_start,
                                  clip_range=clip_range,
@@ -495,12 +499,12 @@ def main():
     parser.add_argument("--condition",     type=str,  default="both",
                         choices=["base", "offline", "oracle", "both", "all"])
     parser.add_argument("--policy",        type=str,  default="mlp",
-                        choices=["mlp", "lstm"])
+                        choices=["mlp", "lstm", "drqn"])
     parser.add_argument("--db",            type=str,  default=config.DEFAULT_STATE_DB_PATH)
     args = parser.parse_args()
 
-    device = config.PPO_DEVICE if torch.cuda.is_available() else "cpu"
-
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
     run_id  = args.run_name or (datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{args.policy}")
     run_dir = os.path.join(args.out, run_id)
     meta    = _init_run(run_dir, args)

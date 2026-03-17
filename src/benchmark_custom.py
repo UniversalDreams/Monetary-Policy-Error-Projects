@@ -25,6 +25,7 @@ import config
 from fed_env import FedEnvBase, StateKeyedLLMWrapper, MockLLMObservationWrapper
 from covid_env import CovidEnv, covid_eval as _covid_eval
 from network import ActorCritic, LSTMActorCritic
+from drqn_network import DuelingDRQN
 
 
 # -------------------------------------------------------------
@@ -92,7 +93,23 @@ class _ModelAdapter:
     def predict(self, obs, state=None, episode_start=None, deterministic=True):
         obs_t = _obs_to_tensor(obs, self._device, obs_rms=self._obs_rms)
         with torch.no_grad():
-            if self._policy == "lstm":
+            if self._policy == "drqn":
+                obs_seq = obs_t.unsqueeze(1)
+
+                is_start = False
+                if episode_start is not None:
+                    is_start = episode_start if isinstance(episode_start, bool) else episode_start.all()
+
+                # reset memory if starting a new episode
+                if state is None or is_start:
+                    state = self._ac.get_initial_hidden_state(obs_seq.size(0), self._device)
+
+                # get Q-values and take the argmax
+                q_vals, new_state = self._ac(obs_seq, state)
+                action = q_vals.squeeze(1).argmax(dim=-1).cpu().numpy()[0]
+                return action, new_state
+
+            elif self._policy == "lstm":
                 ep_t = torch.tensor(episode_start, dtype=torch.float32, device=self._device)
                 action, _, _, new_state = self._ac.get_action_and_value(obs_t, state, ep_t)
                 return action.cpu().numpy()[0], new_state
@@ -108,7 +125,9 @@ def _load_model(path: str, policy: str, device: str,
     # Fixed dims: obs_dim=8 (5 llm + 3 macro), act_dim=7
     obs_dim, act_dim = 8, 7
     hidden = lstm_hidden_size or config.LSTM_HIDDEN_SIZE
-    if policy == "lstm":
+    if policy == "drqn":
+        ac = DuelingDRQN(obs_dim, act_dim, hidden_size=64).to(device)
+    elif policy == "lstm":
         ac = LSTMActorCritic(obs_dim, act_dim, lstm_hidden_size=hidden, n_lstm_layers=1).to(device)
     else:
         ac = ActorCritic(obs_dim, act_dim).to(device)
@@ -664,7 +683,7 @@ def main():
     parser.add_argument("--seeds",         type=int, default=config.EVAL_SEEDS,
                         help=f"Number of evaluation seeds (default {config.EVAL_SEEDS})")
     parser.add_argument("--policy",        type=str, default="mlp",
-                        choices=["mlp", "lstm"],
+                        choices=["mlp", "lstm", "drqn"],
                         help="Policy architecture used during training (default: mlp)")
     parser.add_argument("--ema",           action="store_true",
                         help="Use best_model_ema.pt instead of best_model.pt during auto-discovery")

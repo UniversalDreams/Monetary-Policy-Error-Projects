@@ -44,7 +44,7 @@ LLM_VF_COEF        = 0.05
 
 # Reward shaping
 REWARD_CLIP            = -250.0
-RATE_VOLATILITY_WEIGHT = 0.5
+RATE_VOLATILITY_WEIGHT = 1.5
 SOFT_LANDING_WEIGHT    = 1.0
 SOFT_LANDING_SIGMA     = 0.5
 
@@ -68,7 +68,7 @@ PPO_DEVICE    = "cuda"
 # Environment variation
 SHOCK_SCALE_MIN  = 0.4
 SHOCK_SCALE_MAX  = 1.6
-P_NO_SHOCK       = 0.40
+P_NO_SHOCK       = 0.30
 INIT_STATE_NOISE = 0.5
 
 # Offline state-keyed DB

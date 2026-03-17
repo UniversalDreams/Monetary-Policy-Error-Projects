@@ -27,6 +27,7 @@ Three-phase shock structure:
 
 import os
 import sys
+import matplotlib.pyplot as plt
 
 import gymnasium as gym
 import numpy as np
@@ -439,7 +440,7 @@ def gfc_eval(
 
             if model is None:
                 action = _taylor_action(obs, env.unwrapped.action_mapping)
-            elif policy == "lstm":
+            elif policy in ("lstm", "drqn"):
                 action, lstm_states = model.predict(
                     obs, state=lstm_states,
                     episode_start=episode_start,
@@ -473,3 +474,63 @@ def gfc_eval(
         "mean_reward":     float(np.mean(rewards)),
         "std_reward":      float(np.std(rewards)),
     }
+
+# ---------------------------------------------------------------------------
+# Plotting Helper
+# ---------------------------------------------------------------------------
+
+def plot_gfc_trajectories(gfc_results: dict[str, dict], out_dir: str) -> None:
+    """Overlay plot for GFC era."""
+    import matplotlib.pyplot as plt
+    import os
+
+    real_months = list(range(len(GFC_DATA["cpi"])))
+    real_cpi    = GFC_DATA["cpi"]
+    real_u      = GFC_DATA["unemployment"]
+    real_effr   = GFC_DATA["effr"]
+
+    n_steps  = len(gfc_results[next(iter(gfc_results))]["trajectories"][0]["pi"])
+    all_months = list(range(n_steps))
+
+    conditions = list(gfc_results.keys())
+    n = len(conditions)
+    fig, axes = plt.subplots(3, n, figsize=(6 * n, 10), sharex="col", sharey="row")
+    if n == 1: axes = [[axes[0]], [axes[1]], [axes[2]]]
+
+    for col, cond in enumerate(conditions):
+        traj  = gfc_results[cond]["trajectories"][0]
+        ep_r  = traj["ep_reward"]
+
+        for ax_row in axes:
+            ax = ax_row[col]
+            ax.axvspan(6, 19, color="gold", alpha=0.15, label="Commodity Shock")
+            ax.axvspan(20, 26, color="salmon", alpha=0.25, label="Lehman Panic")
+            ax.grid(True, alpha=0.3)
+
+        # Inflation
+        ax = axes[0][col]
+        ax.plot(real_months, real_cpi, color="red", linestyle="--", linewidth=1.5, label="Real CPI")
+        ax.plot(all_months, traj["pi"], color="red", linewidth=2, label="Agent sim pi")
+        ax.axhline(2.0, color="red", linestyle=":", alpha=0.4)
+        ax.set_title(f"{cond.upper()}\n(reward: {ep_r:+.0f})", fontweight="bold")
+        ax.set_ylabel("Inflation (%)")
+
+        # Unemployment
+        ax = axes[1][col]
+        ax.plot(real_months, real_u, color="blue", linestyle="--", linewidth=1.5, label="Real U-3")
+        ax.plot(all_months, traj["u"], color="blue", linewidth=2, label="Agent sim u")
+        ax.axhline(4.0, color="blue", linestyle=":", alpha=0.4)
+        ax.set_ylabel("Unemployment (%)")
+
+        # Rate
+        ax = axes[2][col]
+        ax.step(real_months, real_effr, color="green", linestyle="--", linewidth=1.5, where="post", label="Real EFFR")
+        ax.step(all_months, traj["rate"], color="steelblue", linewidth=2, where="post", label="Agent rate")
+        ax.set_ylabel("Policy Rate (%)")
+        ax.set_xlabel("Month (0=Jan 2007)")
+
+    plt.tight_layout()
+    path = os.path.join(out_dir, "gfc_trajectories.png")
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved -> {path}")

@@ -195,7 +195,8 @@ def evaluate_ppo(model, env_factory, n_seeds: int, policy: str = "mlp") -> list[
         lstm_states = None
         episode_start = np.ones((1,), dtype=bool)
         while not done:
-            if policy == "lstm":
+            # FIX: ENABLE MEMORY FOR BOTH LSTM AND DRQN
+            if policy in ("lstm", "drqn"):
                 action, lstm_states = model.predict(
                     obs, state=lstm_states, episode_start=episode_start, deterministic=True
                 )
@@ -253,7 +254,8 @@ def _collect_trajectory_ppo(model, env_factory, seed: int = 0,
         pi_hist.append(float(pi))
         u_hist.append(float(u))
         rate_hist.append(float(rate))
-        if policy == "lstm":
+        # FIX: ENABLE MEMORY FOR BOTH LSTM AND DRQN
+        if policy in ("lstm", "drqn"):
             action, lstm_states = model.predict(
                 obs, state=lstm_states, episode_start=episode_start, deterministic=True
             )
@@ -301,9 +303,9 @@ def _find_scenario_seeds() -> dict[str, int]:
 
 _CONDITION_STYLES = {
     "taylor_rule": {"color": "green",     "label": "Taylor Rule"},
-    "baseline":    {"color": "purple",    "label": "Baseline PPO"},
-    "oracle":      {"color": "steelblue", "label": "Oracle PPO"},
-    "llm":         {"color": "darkorange","label": "LLM PPO"},
+    "baseline":    {"color": "purple",    "label": "Baseline DRQN"},
+    "oracle":      {"color": "steelblue", "label": "Oracle DRQN"},
+    "llm":         {"color": "darkorange","label": "LLM DRQN"},
 }
 
 
@@ -887,21 +889,20 @@ def main():
             run_meta=run_meta,
         )
 
-    # -- Update metadata.json ----------------------------------
-    if run_meta is not None and run_dir:
-        run_meta["benchmark"] = {
-            "seeds": args.seeds,
-            "evaluated_at": datetime.now().isoformat(timespec="seconds"),
-            "conditions": {
-                name: {
-                    "mean": round(float(np.mean(rewards)), 4),
-                    "std":  round(float(np.std(rewards)), 4),
-                }
-                for name, rewards in results.items()
-            },
-        }
-        _save_metadata(run_dir, run_meta)
-        print(f"Metadata updated -> {os.path.join(run_dir, 'metadata.json')}")
+
+    from gfc_env import GFCEnv, gfc_eval, plot_gfc_trajectories
+    print("\n>>> Running GFC Benchmark...")
+    gfc_results = {}
+
+    if oracle_model is not None:
+        gfc_results["oracle"] = gfc_eval(model=oracle_model, env_factory=lambda: MockLLMObservationWrapper(GFCEnv()), policy=args.policy)
+    if llm_model is not None:
+        gfc_results["llm"] = gfc_eval(model=llm_model, env_factory=lambda: StateKeyedLLMWrapper(GFCEnv(), db_path=args.db), policy=args.policy)
+    if base_model is not None:
+        gfc_results["baseline"] = gfc_eval(model=base_model, env_factory=lambda: GFCEnv(), policy=args.policy)
+
+    if gfc_results:
+        plot_gfc_trajectories(gfc_results, out_dir)
 
 
 if __name__ == "__main__":

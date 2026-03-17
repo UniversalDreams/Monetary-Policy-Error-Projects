@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import config
 from fed_env import FedEnvBase, StateKeyedLLMWrapper, MockLLMObservationWrapper
 from covid_env import CovidEnv, covid_eval as _covid_eval
+from gfc_env import GFCEnv, gfc_eval as _gfc_eval
 
 
 # -------------------------------------------------------------
@@ -365,6 +366,205 @@ def _print_table(results: dict[str, list[float]], n_seeds: int) -> str:
 
 
 # -------------------------------------------------------------
+# GFC BENCHMARK
+# -------------------------------------------------------------
+
+def plot_gfc_trajectories(
+    gfc_results: dict[str, dict],
+    out_dir: str,
+) -> None:
+    """Overlay plot: agent trajectory vs real Fed path for each condition."""
+    from gfc_env import GFC_DATA, _N_REAL
+    real_months = list(range(_N_REAL))
+    real_cpi    = GFC_DATA["cpi"]
+    real_u      = GFC_DATA["unemployment"]
+    real_effr   = GFC_DATA["effr"]
+
+    n_steps    = len(gfc_results[next(iter(gfc_results))]["trajectories"][0]["pi"])
+    all_months = list(range(n_steps))
+
+    # phase shading spans (indices into Jan-2007-origin timeline)
+    phase1 = (6,  19)   # housing bust + commodity inflation
+    phase2 = (20, 26)   # acute crisis (Lehman)
+    phase3 = (27, 47)   # extended recession / ZLB
+
+    conditions = list(gfc_results.keys())
+    n = len(conditions)
+    fig, axes = plt.subplots(3, n, figsize=(6 * n, 10), sharex="col", sharey="row")
+    if n == 1:
+        axes = [[axes[0]], [axes[1]], [axes[2]]]
+
+    for col, cond in enumerate(conditions):
+        style = _CONDITION_STYLES.get(cond, {"color": "steelblue", "label": cond})
+        traj  = gfc_results[cond]["trajectories"][0]
+        ep_r  = traj["ep_reward"]
+
+        for ax_row in axes:
+            ax = ax_row[col]
+            ax.axvspan(*phase1, color="gold",   alpha=0.18, label="Housing bust")
+            ax.axvspan(*phase2, color="salmon",  alpha=0.18, label="Acute crisis")
+            ax.axvspan(*phase3, color="thistle", alpha=0.18, label="Extended recession")
+            if n_steps > _N_REAL:
+                ax.axvline(_N_REAL - 1, color="gray", linestyle=":", linewidth=1.2,
+                           label="Real data ends")
+            ax.grid(True, alpha=0.3)
+
+        # — Inflation —
+        ax = axes[0][col]
+        ax.plot(real_months, real_cpi, color="red", linestyle="--", linewidth=1.5,
+                label="Real CPI")
+        ax.plot(all_months, traj["pi"], color="red", linewidth=2, label="Agent sim pi")
+        ax.axhline(2.0, color="red", linestyle=":", alpha=0.4)
+        ax.set_title(f"{style['label']}\n(reward: {ep_r:+.0f})", fontweight="bold")
+        ax.set_ylabel("Inflation (%)")
+        ax.legend(loc="upper left", fontsize=7)
+
+        # — Unemployment —
+        ax = axes[1][col]
+        ax.plot(real_months, real_u,   color="blue", linestyle="--", linewidth=1.5,
+                label="Real U-3")
+        ax.plot(all_months, traj["u"], color="blue", linewidth=2, label="Agent sim u")
+        ax.axhline(4.0, color="blue", linestyle=":", alpha=0.4)
+        ax.set_ylabel("Unemployment (%)")
+        ax.legend(loc="upper right", fontsize=7)
+
+        # — Policy rate —
+        ax = axes[2][col]
+        ax.step(real_months, real_effr,    color="green", linestyle="--",
+                linewidth=1.5, where="post", label="Real EFFR")
+        ax.step(all_months,  traj["rate"], color=style["color"],
+                linewidth=2,   where="post", label="Agent rate")
+        ax.set_ylabel("Policy Rate (%)")
+        ax.set_xlabel("Month (0=Jan 2007)")
+        ax.legend(loc="upper right", fontsize=7)
+
+    # x-tick labels: every 6 months starting Jan 2007
+    tick_step = 6
+    ticks = list(range(0, n_steps, tick_step))
+    def _month_label(t):
+        year  = 2007 + (t // 12)
+        month = ["Jan","Feb","Mar","Apr","May","Jun",
+                 "Jul","Aug","Sep","Oct","Nov","Dec"][t % 12]
+        return f"{month}'{str(year)[2:]}"
+    labels = [_month_label(t) for t in ticks]
+    for col in range(n):
+        axes[2][col].set_xticks(ticks)
+        axes[2][col].set_xticklabels(labels, rotation=45, fontsize=7)
+
+    fig.suptitle(f"GFC-Era Benchmark  (Jan 2007 – {_month_label(n_steps - 1)})",
+                 fontweight="bold", fontsize=13)
+    plt.tight_layout()
+    path = os.path.join(out_dir, "gfc_trajectories.png")
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved -> {path}")
+
+
+def _run_gfc_benchmark(
+    args,
+    out_dir: str,
+    base_model=None,
+    llm_model=None,
+    oracle_model=None,
+    run_meta: dict | None = None,
+) -> None:
+    """Evaluate all available conditions on GFCEnv and save table + plots."""
+    n       = args.gfc_runs
+    db_path = args.db
+    policy  = args.policy
+
+    gfc_results: dict[str, dict] = {}
+
+    print(f"\n{'='*56}")
+    print(f"GFC-ERA BENCHMARK  (counterfactual, {n} runs each)")
+    print(f"{'='*56}")
+
+    print("\n>>> Taylor Rule ...")
+    gfc_results["taylor_rule"] = _gfc_eval(model=None, n_runs=n, policy=policy)
+    print(f"    mean={gfc_results['taylor_rule']['mean_reward']:+.2f}  "
+          f"std={gfc_results['taylor_rule']['std_reward']:.2f}")
+
+    if base_model is not None:
+        print("\n>>> Baseline PPO ...")
+        gfc_results["baseline"] = _gfc_eval(
+            model=base_model,
+            env_factory=lambda: GFCEnv(),
+            n_runs=n, policy=policy,
+        )
+        print(f"    mean={gfc_results['baseline']['mean_reward']:+.2f}  "
+              f"std={gfc_results['baseline']['std_reward']:.2f}")
+
+    if llm_model is not None and os.path.exists(db_path):
+        print("\n>>> LLM PPO ...")
+        _db = db_path
+        from fed_env import StateKeyedLLMWrapper
+        gfc_results["llm"] = _gfc_eval(
+            model=llm_model,
+            env_factory=lambda: StateKeyedLLMWrapper(GFCEnv(), db_path=_db),
+            n_runs=n, policy=policy,
+        )
+        print(f"    mean={gfc_results['llm']['mean_reward']:+.2f}  "
+              f"std={gfc_results['llm']['std_reward']:.2f}")
+
+    if oracle_model is not None:
+        print("\n>>> Oracle PPO ...")
+        from fed_env import MockLLMObservationWrapper
+        gfc_results["oracle"] = _gfc_eval(
+            model=oracle_model,
+            env_factory=lambda: MockLLMObservationWrapper(GFCEnv()),
+            n_runs=n, policy=policy,
+        )
+        print(f"    mean={gfc_results['oracle']['mean_reward']:+.2f}  "
+              f"std={gfc_results['oracle']['std_reward']:.2f}")
+
+    # — Table —
+    taylor_mean = gfc_results["taylor_rule"]["mean_reward"]
+    lines = [
+        f"GFC Benchmark — {n} runs each",
+        "-" * 56,
+        f"{'condition':<16} {'mean':>9} {'std':>8} {'d_taylor':>10}",
+        "-" * 56,
+    ]
+    for name, res in gfc_results.items():
+        mean, std = res["mean_reward"], res["std_reward"]
+        delta = mean - taylor_mean if name != "taylor_rule" else 0.0
+        delta_str = f"{delta:+.2f}" if name != "taylor_rule" else "—"
+        lines.append(f"{name:<16} {mean:>+9.2f} {std:>8.2f} {delta_str:>10}")
+    lines.append("-" * 56)
+    table = "\n".join(lines) + "\n"
+    print("\n" + table)
+
+    txt_path = os.path.join(out_dir, "gfc_benchmark.txt")
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write(table)
+    print(f"Saved -> {txt_path}")
+
+    # — CSV —
+    csv_path = os.path.join(out_dir, "gfc_benchmark.csv")
+    conds = list(gfc_results.keys())
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["run"] + conds)
+        for i in range(n):
+            writer.writerow([i] + [round(gfc_results[c]["rewards"][i], 4) for c in conds])
+    print(f"Saved -> {csv_path}")
+
+    # — Plot —
+    plot_gfc_trajectories(gfc_results, out_dir)
+
+    # — Update metadata —
+    if run_meta is not None:
+        run_meta.setdefault("gfc_benchmark", {}).update({
+            "runs": n,
+            "evaluated_at": datetime.now().isoformat(timespec="seconds"),
+            "conditions": {
+                name: {"mean": round(res["mean_reward"], 4), "std": round(res["std_reward"], 4)}
+                for name, res in gfc_results.items()
+            },
+        })
+
+
+# -------------------------------------------------------------
 # COVID BENCHMARK
 # -------------------------------------------------------------
 
@@ -590,6 +790,10 @@ def main():
                         help="Also benchmark all conditions on the COVID-era environment (Jan 2020–Dec 2022)")
     parser.add_argument("--covid-runs",    type=int, default=1,
                         help="Number of independent runs per condition for COVID eval (default: 1)")
+    parser.add_argument("--gfc",           action="store_true",
+                        help="Also benchmark all conditions on the GFC environment (Jan 2007–Dec 2012)")
+    parser.add_argument("--gfc-runs",      type=int, default=1,
+                        help="Number of independent runs per condition for GFC eval (default: 1)")
     args = parser.parse_args()
 
     # -- Resolve run dir, model paths, and metadata -------------
@@ -755,6 +959,16 @@ def main():
     # -- COVID benchmark ---------------------------------------
     if args.covid:
         _run_covid_benchmark(
+            args, out_dir,
+            base_model=base_model,
+            llm_model=llm_model,
+            oracle_model=oracle_model,
+            run_meta=run_meta,
+        )
+
+    # -- GFC benchmark -----------------------------------------
+    if args.gfc:
+        _run_gfc_benchmark(
             args, out_dir,
             base_model=base_model,
             llm_model=llm_model,
